@@ -136,3 +136,9 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Why:** extraction is the most accuracy-critical local step and the heaviest reading. GPU tools run one at a time, so the extra VRAM is free; on 16 GB, Q8_0 (roughly 9–10 GB of weights) still leaves room for a long context. Measuring avoids paying in speed and context for no gain.
 - **Rejected:** keeping Q4_K_M untested; switching to Q8_0 without measuring
 - **Date:** 2026-11-25
+
+### D-036 — Discovery-recall test: measured automatically against a reference review, with leakage guard
+- **Decision:** `research-agent recall <run folder> --reference <DOI or OpenAlex id>` fetches the reference review's reference list from OpenAlex and reports recall = share of those references found among the run's candidates (top 300) and among the screened-kept papers, plus a CSV of missed references with titles for me to check. The reference review must not be in the run: `discover --exclude <id>` removes it before expansion, and `recall` warns if it is present, because its own reference list would otherwise leak in through backward expansion.
+- **Why:** step 4 needs a number, not an impression. A recent review's reference list is an independent, expert-made list of what matters for the topic. Raw recall against all references is a lower bound, since broad reviews also cite off-topic work; the missed-references CSV shows which misses actually matter.
+- **Rejected:** me picking "key references" by hand for every topic (slow, not repeatable); judging recall only from the top 10 (says nothing about coverage)
+- **Date:** 2026-11-25
