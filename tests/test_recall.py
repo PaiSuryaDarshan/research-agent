@@ -28,6 +28,13 @@ def test_recall_matches_id_first_and_falls_back_to_doi(tmp_path: Path, with_scre
     write_rows(tmp_path / "candidates.jsonl", [first, second])
     if with_screening:
         write_rows(tmp_path / "screened.jsonl", [second])
+        write_rows(tmp_path / "all_candidates.jsonl", [
+            first, second, {"openalex_id": "W3", "rank": 321, "graph": 0.5},
+            {"openalex_id": "W4", "rank": 400, "keyword": 0.3},
+        ])
+        (tmp_path / "screening_excluded.csv").write_text(
+            "rank,year,title,reason\n3,2025,Paper W1,Off-topic for this review.\n", encoding="utf-8"
+        )
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["api_key"] == KEY
@@ -45,12 +52,21 @@ def test_recall_matches_id_first_and_falls_back_to_doi(tmp_path: Path, with_scre
     assert result.n_references == 4
     assert result.recall_candidates == 0.5
     assert result.recall_kept == (0.25 if with_screening else None)
+    assert result.recall_pool == (1.0 if with_screening else None)
+    assert [row.id for row in result.cut_references] == (["W4", "W3"] if with_screening else [])
+    assert [(row.id, row.screening_reason) for row in result.screening_dropped] == (
+        [("W1", "Off-topic for this review.")] if with_screening else []
+    )
+    if with_screening:
+        assert result.cut_references[0].pool_work.keyword == 0.3
     assert not result.leakage
     assert [row.id for row in missed] == ["W4", "W3"]
     csv_text = (tmp_path / "recall_W42.csv").read_text(encoding="utf-8")
     rows = list(csv.DictReader(csv_text.splitlines()))
     assert [row["rank"] for row in rows] == ["3", "5", "", ""]
     assert rows[1]["found_in_kept"] == ("True" if with_screening else "")
+    assert rows[2]["found_in_pool"] == ("True" if with_screening else "")
+    assert rows[2]["pool_rank"] == ("321" if with_screening else "")
     metadata = (tmp_path / "run.json").read_text(encoding="utf-8")
     assert json.loads(metadata)["recall"] == result.model_dump()
     assert KEY not in csv_text + metadata
@@ -98,11 +114,16 @@ def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, mon
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: http)
-    assert main(["discover", "topic", "--exclude", "w42", "--exclude", "W50", "--no-abstracts"]) == 0
+    assert main(["discover", "topic", "--exclude", "w42", "--exclude", "W50",
+                 "--max-candidates", "2", "--no-abstracts"]) == 0
     assert filters == ["openalex_id:W8", "cites:W1", "cites:W2"]
     folder, = Path("data/runs").iterdir()
     rows = [json.loads(line) for line in (folder / "candidates.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert {row["openalex_id"].rsplit("/", 1)[-1] for row in rows} == {"W1", "W2", "W8", "W10"}
+    pool = [json.loads(line) for line in (folder / "all_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2 and len(pool) == 4
+    assert pool[:2] == rows
+    assert [row["rank"] for row in pool] == [1, 2, 3, 4]
+    assert {row["openalex_id"].rsplit("/", 1)[-1] for row in pool} == {"W1", "W2", "W8", "W10"}
     metadata = json.loads((folder / "run.json").read_text(encoding="utf-8"))
     assert metadata["excluded_ids"] == ["W42", "W50"]
     assert metadata["search_work_ids"] == ["W1", "W2"]

@@ -133,7 +133,8 @@ def _collect(
     citers = [work for work in citers if work_id(work.openalex_id) not in excluded_ids]
     backward_added = _merge_candidates(candidates, references)
     forward_added = _merge_candidates(candidates, citers)
-    ranked = rank_candidates(list(candidates.values()), topic, queries, today.year, max_candidates)
+    pool = rank_candidates(list(candidates.values()), topic, queries, today.year, max_candidates=None)
+    ranked = [candidate.model_copy() for candidate in pool[:max_candidates]]
     return ranked, DiscoveryStats(
         per_query_hits=hits,
         total_before_dedup=len(search_results) + len(references) + len(citers),
@@ -144,6 +145,7 @@ def _collect(
         kept=len(ranked),
         excluded_ids=sorted(excluded_ids),
         search_work_ids=list(dict.fromkeys(work_id(work.openalex_id) for work in search_results)),
+        all_candidates=pool,
     )
 
 
@@ -177,9 +179,9 @@ def save_run(
         (staging / "run.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        with (staging / "candidates.jsonl").open("w", encoding="utf-8") as output:
-            for candidate in candidates:
-                output.write(candidate.model_dump_json() + "\n")
+        _write_candidates(staging / "candidates.jsonl", candidates)
+        if stats.all_candidates is not None:
+            _write_candidates(staging / "all_candidates.jsonl", stats.all_candidates)
         folder_time = now
         while True:
             destination = runs_dir / f"{folder_time:%Y%m%d-%H%M%S}_{slug}"
@@ -189,3 +191,9 @@ def save_run(
                 if not destination.exists():
                     raise
                 folder_time += timedelta(seconds=1)
+
+
+def _write_candidates(path: Path, candidates: Sequence[Candidate]) -> None:
+    with path.open("w", encoding="utf-8") as output:
+        for candidate in candidates:
+            output.write(candidate.model_dump_json() + "\n")

@@ -19,9 +19,27 @@ class LMStudioClient:
         self._client = client
         base = base_url.rstrip("/")
         self._url = base + ("/v1" if not urlsplit(base).path else "") + "/chat/completions"
+        self._models_url = base.removesuffix("/v1") + "/api/v0/models"
         self.model = model
         self.tokens_in = 0
         self.tokens_out = 0
+
+    def model_info(self) -> dict[str, str | int | None] | str:
+        try:
+            response = self._client.get(self._models_url, timeout=5, follow_redirects=False)
+            if response.is_success:
+                for model in response.json().get("data", []):
+                    if model.get("id") == self.model and model.get("state") == "loaded":
+                        maximum = model.get("max_context_length")
+                        return {
+                            "id": self.model,
+                            "quantization": model.get("quantization"),
+                            "context_length": model.get("loaded_context_length") or model.get("context_length") or maximum,
+                            "max_context_length": maximum,
+                        }
+        except (httpx.HTTPError, AttributeError, TypeError, ValueError):
+            pass
+        return "unavailable"
 
     def chat_json(self, system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
         self.tokens_in = self.tokens_out = 0

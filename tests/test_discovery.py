@@ -388,6 +388,8 @@ def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, ca
     assert stats.calls_per_api == {"openalex": 1, "semantic_scholar": 1, "crossref": 1}
     assert stats.abstract_lookup_failures == {"semantic_scholar": 1}
     folder = save_run("Topic", [], 2, candidates, stats, runs_dir=tmp_path)
+    pool = (folder / "all_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["abstract_source"] for line in pool] == ["none", "none"]
     for output in [caplog.text, *(file.read_text(encoding="utf-8") for file in folder.iterdir())]:
         assert KEY not in output
         assert "x-api-key" not in output

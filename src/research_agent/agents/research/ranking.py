@@ -33,7 +33,7 @@ def rank_candidates(
     topic: str,
     queries: Sequence[str],
     current_year: int,
-    max_candidates: int = 300,
+    max_candidates: int | None = 300,
 ) -> list[Candidate]:
     degrees = _graph_degrees(candidates)
     max_degree = max(degrees.values(), default=0) or 1

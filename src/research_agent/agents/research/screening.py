@@ -103,6 +103,7 @@ def screen_run(
     progress: Callable[[int, int, int], None] | None = None,
 ) -> dict:
     started = monotonic()
+    model_info = client.model_info()
     metadata_path = folder / "run.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     candidates = [
@@ -144,7 +145,10 @@ def screen_run(
                 progress(index, len(candidates), cache_hits)
 
     stats = _stats(rows)
-    stats.update(model=client.model, cache_hits=cache_hits, minutes_taken=(monotonic() - started) / 60)
+    stats.update(
+        model=client.model, model_info=model_info, cache_hits=cache_hits,
+        minutes_taken=(monotonic() - started) / 60,
+    )
     _write_results(folder, rows)
     metadata["screening"] = stats
     _write_text_atomic(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")

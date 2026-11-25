@@ -56,6 +56,7 @@ class DiscoveryStats(BaseModel):
     abstract_lookup_failures: dict[str, int] = Field(default_factory=dict)
     excluded_ids: list[str] = Field(default_factory=list, exclude=True)
     search_work_ids: list[str] = Field(default_factory=list, exclude=True)
+    all_candidates: list[Candidate] | None = Field(default=None, exclude=True)
 
 
 def normalize_doi(value: str | None) -> str | None:

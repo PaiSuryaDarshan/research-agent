@@ -47,7 +47,8 @@ def _screen(args: argparse.Namespace) -> int:
         return 2
     print("Decisions: " + ", ".join(f"{name}={count}" for name, count in stats["decisions"].items()))
     print(f"Kept: {stats['kept']} | Errors: {stats['errors']} | Cached: {stats['cache_hits']}")
-    print(f"Model: {stats['model']} | Tokens: {stats['total_tokens']} | Minutes: {stats['minutes_taken']:.2f}")
+    print(f"Model: {stats['model']} | Tokens in: {stats['tokens_in']} | Tokens out: {stats['tokens_out']} "
+          f"| Total tokens: {stats['total_tokens']} | Minutes: {stats['minutes_taken']:.2f}")
     return 0
 
 
@@ -98,7 +99,7 @@ def _recall(args: argparse.Namespace) -> int:
         print("Could not measure recall. Check the run folder, files, and reference DOI or OpenAlex ID.", file=sys.stderr)
         return 2
     print(f"References: {result.n_references}")
-    for name in ("recall_candidates", "recall_kept"):
+    for name in ("recall_pool", "recall_candidates", "recall_kept"):
         value = getattr(result, name)
         print(f"{name}: {'null' if value is None else format(value, '.2%')}")
     print(f"Leakage: {'yes' if result.leakage else 'no detected leakage'}")
@@ -106,6 +107,8 @@ def _recall(args: argparse.Namespace) -> int:
         locations = []
         if result.reference_in_candidates:
             locations.append("ranked candidates")
+        elif result.reference_in_pool:
+            locations.append("the pre-cut pool")
         if result.reference_in_search:
             locations.append("search hits before ranking")
         print("WARNING: Reference review was present in " + " and ".join(locations) + ".", file=sys.stderr)
@@ -114,6 +117,19 @@ def _recall(args: argparse.Namespace) -> int:
     print("Most-cited references missed by candidates (year | citations | title)")
     for row in missed:
         print(f"{row.year or '?'} | {row.cited_by_count} | {row.title}")
+    print("Most-cited references found in the pool but cut")
+    for row in result.cut_references:
+        work = row.pool_work
+        print(f"{work.rank} | {row.year or '?'} | {row.cited_by_count} | {row.title} | "
+              f"graph={work.graph:.4f}, cites_per_year={work.cites_per_year:.4f}, "
+              f"recency={work.recency:.4f}, keyword={work.keyword:.4f}")
+    if not result.cut_references:
+        print("None" if result.recall_pool is not None else "Pre-cut pool unavailable.")
+    print("References excluded by screening (rank | year | title | reason)")
+    for row in result.screening_dropped:
+        print(f"{row.rank} | {row.year or '?'} | {row.title} | {row.screening_reason}")
+    if not result.screening_dropped:
+        print("None recorded." if (args.folder / "screening_excluded.csv").exists() else "Screening exclusions unavailable.")
     return 0
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from research_agent.agents.research.models import Candidate, normalize_doi, work_id
 from research_agent.agents.research.openalex import OpenAlexClient
@@ -19,18 +19,12 @@ class RunWork(BaseModel):
     rank: int | None = None
     found_by: list[str] = []
     via: list[str] = []
+    graph: float = 0.0
+    cites_per_year: float = 0.0
+    recency: float = 0.0
+    keyword: float = 0.0
 
     _normalize_doi = field_validator("doi")(normalize_doi)
-
-
-class RecallResult(BaseModel):
-    reference_id: str
-    n_references: int
-    recall_candidates: float | None
-    recall_kept: float | None
-    leakage: bool
-    reference_in_candidates: bool
-    reference_in_search: bool | None
 
 
 @dataclass
@@ -42,6 +36,23 @@ class ReferenceRow:
     found_in_candidates: bool
     found_in_kept: bool | None
     rank: int | None
+    found_in_pool: bool | None
+    pool_work: RunWork | None
+    screening_reason: str | None
+
+
+class RecallResult(BaseModel):
+    reference_id: str
+    n_references: int
+    recall_pool: float | None
+    recall_candidates: float | None
+    recall_kept: float | None
+    leakage: bool
+    reference_in_pool: bool
+    reference_in_candidates: bool
+    reference_in_search: bool | None
+    cut_references: list[ReferenceRow] = Field(exclude=True)
+    screening_dropped: list[ReferenceRow] = Field(exclude=True)
 
 
 class RunIndex:
@@ -73,9 +84,21 @@ def _share(count: int, total: int) -> float | None:
 def _write_report(path: Path, rows: Sequence[ReferenceRow]) -> None:
     with path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["id", "year", "title", "found_in_candidates", "found_in_kept", "rank"])
+        writer.writerow([
+            "id", "year", "title", "found_in_candidates", "found_in_kept", "rank", "found_in_pool", "pool_rank"
+        ])
         for row in rows:
-            writer.writerow([row.id, row.year, row.title, row.found_in_candidates, row.found_in_kept, row.rank])
+            writer.writerow([
+                row.id, row.year, row.title, row.found_in_candidates, row.found_in_kept, row.rank,
+                row.found_in_pool, row.pool_work.rank if row.pool_work else None,
+            ])
+
+
+def _excluded_reasons(path: Path) -> dict[int, str]:
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8", newline="") as file:
+        return {int(row["rank"]): row["reason"] for row in csv.DictReader(file)}
 
 
 def measure_recall(
@@ -86,6 +109,10 @@ def measure_recall(
     candidates = _read_works(folder / "candidates.jsonl")
     screened = folder / "screened.jsonl"
     kept = RunIndex(_read_works(screened)) if screened.exists() else None
+    pool_path = folder / "all_candidates.jsonl"
+    pool_entries = _read_works(pool_path) if pool_path.exists() else None
+    pool = RunIndex(pool_entries) if pool_entries is not None else None
+    reasons = _excluded_reasons(folder / "screening_excluded.csv")
     indexed = RunIndex(candidates)
 
     review = client.reference(reference)
@@ -98,6 +125,7 @@ def measure_recall(
         doi = details.doi if details else None
         candidate = indexed.find(id_, doi)
         kept_work = kept.find(id_, doi) if kept is not None else None
+        pool_work = pool.find(id_, doi) if pool is not None else None
         ranked = candidate or kept_work
         rows.append(ReferenceRow(
             id=id_,
@@ -107,28 +135,41 @@ def measure_recall(
             found_in_candidates=candidate is not None,
             found_in_kept=(kept_work is not None) if kept is not None else None,
             rank=ranked.rank if ranked else None,
+            found_in_pool=(pool_work is not None) if pool is not None else None,
+            pool_work=pool_work,
+            screening_reason=reasons.get(candidate.rank) if candidate and kept_work is None else None,
         ))
 
     reference_candidate = indexed.find(reference_id, review.doi)
+    reference_pool = pool.find(reference_id, review.doi) if pool is not None else None
     # Older runs have only provenance from candidates that survived the ranking cutoff.
     in_search = None
     if "search_work_ids" in metadata:
         in_search = reference_id in metadata["search_work_ids"]
-    if (reference_candidate and reference_candidate.found_by) or any(
+    reference_entry = reference_candidate or reference_pool
+    if (reference_entry and reference_entry.found_by) or any(
         tag in candidate.via
-        for candidate in candidates
+        for candidate in (pool_entries if pool_entries is not None else candidates)
         for tag in (f"ref_of:{reference_id}", f"cites:{reference_id}")
     ):
         in_search = True
 
+    cut_references = sorted(
+        (row for row in rows if row.found_in_pool and not row.found_in_candidates),
+        key=lambda row: -row.cited_by_count,
+    )
     result = RecallResult(
         reference_id=reference_id,
         n_references=len(rows),
+        recall_pool=_share(sum(row.found_in_pool is True for row in rows), len(rows)) if pool is not None else None,
         recall_candidates=_share(sum(row.found_in_candidates for row in rows), len(rows)),
         recall_kept=_share(sum(row.found_in_kept is True for row in rows), len(rows)) if kept is not None else None,
-        leakage=reference_candidate is not None or in_search is True,
+        leakage=reference_candidate is not None or reference_pool is not None or in_search is True,
+        reference_in_pool=reference_pool is not None,
         reference_in_candidates=reference_candidate is not None,
         reference_in_search=in_search,
+        cut_references=cut_references[:10],
+        screening_dropped=[row for row in rows if row.screening_reason is not None],
     )
     _write_report(folder / f"recall_{reference_id}.csv", rows)
     metadata["recall"] = result.model_dump()

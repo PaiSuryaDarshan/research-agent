@@ -48,6 +48,9 @@ def test_invalid_json_retries_and_is_kept(tmp_path: Path):
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            assert request.url.path == "/api/v0/models"
+            return httpx.Response(404)
         requests.append(request.content)
         return response("broken JSON")
 
@@ -57,6 +60,8 @@ def test_invalid_json_retries_and_is_kept(tmp_path: Path):
     assert stats["decisions"] == {"include": 0, "exclude": 0, "unsure": 1}
     assert stats["kept"] == stats["errors"] == 1
     assert stats["total_tokens"] == 28
+    assert (stats["tokens_in"], stats["tokens_out"]) == (20, 8)
+    assert stats["model_info"] == "unavailable"
     assert json.loads((tmp_path / "screened.jsonl").read_text(encoding="utf-8"))["decision"] == "unsure"
 
 
@@ -66,6 +71,11 @@ def test_screen_routes_decisions_and_resumes_by_prompt(tmp_path: Path):
     decisions = {"Paper 1": "include", "Paper 2": "exclude", "Paper 3": "unsure"}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [
+                {"id": "qwen", "state": "loaded", "quantization": "Q4_K_M",
+                 "loaded_context_length": 4096, "max_context_length": 32768},
+            ]})
         body = json.loads(request.content)
         prompt = json.loads(body["messages"][1]["content"])
         prompts.append(prompt)
@@ -77,6 +87,9 @@ def test_screen_routes_decisions_and_resumes_by_prompt(tmp_path: Path):
         stats = screen_run(tmp_path, client)
         assert len(prompts) == 3 and stats["cache_hits"] == 1
         assert stats["decisions"] == dict.fromkeys(decisions.values(), 1)
+        assert stats["model_info"] == {"id": "qwen", "quantization": "Q4_K_M",
+                                       "context_length": 4096, "max_context_length": 32768}
+        assert (stats["tokens_in"], stats["tokens_out"]) == (30, 12)
         assert stats["by_abstract_source"]["none"] == {"include": 0, "exclude": 1, "unsure": 1}
         kept = (tmp_path / "screened.jsonl").read_text(encoding="utf-8").splitlines()
         assert [json.loads(row)["decision"] for row in kept] == ["include", "unsure"]
@@ -97,6 +110,8 @@ def test_cli_limit_and_unreachable(tmp_path: Path, monkeypatch, capsys):
     real_client = httpx.Client
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404)
         requested.append(request)
         if len(requested) > 1:
             raise httpx.ConnectError("hidden request details", request=request)
@@ -110,6 +125,7 @@ def test_cli_limit_and_unreachable(tmp_path: Path, monkeypatch, capsys):
     output = capsys.readouterr()
     assert "Could not reach LM Studio" in output.err
     assert "hidden request details" not in output.err
+    assert "Tokens in: 10 | Tokens out: 4" in output.out
 
 
 def test_missing_abstract_cannot_be_included(tmp_path: Path):
