@@ -173,3 +173,9 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Rejected:** batching many papers per call (cross-talk between papers, harder to parse); excluding papers that have no abstract; a cloud model for screening (D-011, D-033)
 - **Note:** the stopping rule (stop when a new round adds few relevant papers) waits until the gap check exists, since there is only one discovery round so far.
 - **Date:** 2026-11-25
+
+### D-037 — Rank by in-set citations; protect foundational papers (replaces the graph score in D-031)
+- **Decision:** the graph score counts only how many candidates in the pool cite a paper (in-degree), log-scaled, instead of links in either direction. A paper cited by at least 3 search hits is marked foundational: it bypasses the top-300 cut and screening keeps it without a model call (decision include, reason "foundational: cited by N search hits"). Other weights unchanged.
+- **Why:** the first recall test showed the cut removing classic method papers (Kissinger 1957, Coats–Redfern 1964, Ozawa 1966) and screening excluding Friedman's 1964 method paper, because their titles don't mention the topic. Counting out-links rewarded reviews with long reference lists; being cited by many on-topic papers is the real signal that a paper matters to the field. Search hits are topical by construction, so their citations are a safe test.
+- **Rejected:** only raising the cap (keeps the wrong signal and adds screening work); only lowering the keyword weight (lets off-topic papers in); asking Qwen to recognise classic methods (a 9B model can't be relied on for that)
+- **Date:** 2026-11-25
