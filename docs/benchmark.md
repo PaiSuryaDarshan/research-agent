@@ -84,7 +84,15 @@ Quantisation comparison (D-024): same papers, same prompt, extraction run with Q
 I may add or swap topics. Once frozen, the set stays fixed so results stay comparable over time.
 
 ## Results
-None yet.
+Preliminary discovery-recall runs, 2026-11-25. Topic: kinetic modelling of biomass pyrolysis. Reference: W4413216169 (Shakor et al. 2025, a broad TGA kinetics review that also cites off-topic work, so raw recall is a lower bound).
+
+| Run | Queries | Candidate recall (top 300) | Kept recall |
+|---|---|---|---|
+| Leaky (reference review in the run) | 1 | 8.1% | 8.1% |
+| Fair (reference excluded) | 1 | 4.8% | 4.3% |
+| Fair | 5, hand-written | 12.9% | 11.8% |
+
+Finding so far: several queries covering the topic's branches (model-free, DAEM, lumped schemes, ML) raised recall 2.7×. With 5 queries, discovery found 1,249 papers and the top-300 cut removed 949; the missed classic TGA-method papers are suspected to be among them (to be checked with recall before the cut).
 
 ## Benchmark decisions
 Newest at the bottom. Never delete an entry: if a decision changes, add a new one that says which entry it replaces.

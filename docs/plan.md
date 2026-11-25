@@ -29,7 +29,7 @@ A science research agent: give Hermes a topic and get a rigorous ~6-page review 
 14. Full benchmark: 4 setups × the topic set; blind grading
 
 ## Current step
-Screening (step 3, D-035) built: skim `screening_excluded.csv` for wrong excludes, then step 4 (freeze topic set, discovery-recall test). All LLM steps local until step 13 (D-033).
+Step 4 in progress: discovery-recall test on biomass pyrolysis (results in `benchmark.md`). Next: measure recall before the top-300 cut, then decide between ranking weights and a bigger cap. All LLM steps local until step 13 (D-033).
 
 ## Folder layout
 ```
