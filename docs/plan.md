@@ -15,8 +15,8 @@ A science research agent: give Hermes a topic and get a rigorous ~6-page review 
 1. ~~Repo skeleton (Python package, CLI stub, tests, .gitignore)~~ ✅ done 2026-11-25
 2. ~~Discovery: OpenAlex search, one-hop citation expansion, ranking, abstract fallback~~ ✅ done 2026-11-25 (D-030, D-031, D-032, D-037)
 3. ~~Screening: local Qwen reads titles and abstracts, keep if unsure~~ ✅ done 2026-11-25 (D-035)
-4. Query generation: local Qwen turns the topic into research questions and branch queries (D-038) ← next
-5. Discovery-recall validation on a second topic with a strong reference review, automatic queries only; freeze the topic set (D-021, D-036)
+4. ~~Query generation: local Qwen turns the topic into research questions and queries, plus a keyword feedback round~~ ✅ done 2026-11-25 (D-038, D-041, D-042)
+5. Discovery-recall validation on a second topic with a strong reference review, automatic queries only; freeze the topic set (D-021, D-036) ← next
 6. Thin `research-agent run` (topic → queries → discover → screen) on the plain state machine, plus the Hermes skill that calls it (D-039)
 7. Research agent, evidence: fetch full texts → MinerU → sections with DOI / page / section ids
 8. Evidence ledger: schema → local per-paper extraction (strict format + verbatim quote) → automatic checks
@@ -32,7 +32,7 @@ A science research agent: give Hermes a topic and get a rigorous ~6-page review 
 More search sources (Semantic Scholar search, Crossref, arXiv, ChemRxiv) are added only if a recall test shows OpenAlex missing papers.
 
 ## Current step
-Step 4: query generation (D-038), then the recall validation on a second topic (step 5). All LLM steps local until step 14 (D-033).
+Step 5: recall validation on metal-organic frameworks for CO2 capture, automatic queries only. Pass if pool recall is at least 20% against an on-topic reference review; then step 6 (`run` + Hermes skill). All LLM steps local until step 14 (D-033).
 
 ## Folder layout
 ```
