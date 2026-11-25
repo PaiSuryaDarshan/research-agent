@@ -167,3 +167,9 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Note:** expect weaker synthesis and review from a 9B model; judge them only after cloud setups exist. The ledger gate (D-023) is unaffected, since extraction was always local.
 - **Date:** 2026-11-25
 
+### D-035 — Screening: one local Qwen call per paper, strict JSON, keep if unsure
+- **Decision:** `research-agent screen <run folder>` sends each candidate (title, year, venue, abstract with its source) to Qwen in LM Studio, one paper per call, temperature 0, JSON output: decision (include / exclude / unsure), reason (max 25 words). Include and unsure both go forward. Papers without an abstract can only be excluded when the title is clearly off-topic. Decisions are cached per paper so a stopped run resumes. Every excluded paper is written to `screening_excluded.csv` for me to skim.
+- **Why:** one paper per call keeps a 9B model reliable and each decision traceable; keep-if-unsure protects recall, since a wrongly excluded paper never comes back while a wrongly kept one costs only reading time. Skimming the excluded list is the cheap check on false excludes until the discovery-recall test (step 4).
+- **Rejected:** batching many papers per call (cross-talk between papers, harder to parse); excluding papers that have no abstract; a cloud model for screening (D-011, D-033)
+- **Note:** the stopping rule (stop when a new round adds few relevant papers) waits until the gap check exists, since there is only one discovery round so far.
+- **Date:** 2026-11-25
