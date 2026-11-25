@@ -198,3 +198,15 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Why:** Hermes is the daily interface (D-004). Wiring it early surfaces integration problems (paths, long runs, GPU sharing, output format) while they're cheap to fix, and every new step is usable from Hermes as soon as it exists.
 - **Rejected:** wiring Hermes only at the end (integration surprises after everything is built)
 - **Date:** 2026-11-25
+
+### D-041 — Anchor every generated query to the topic; fixed branches (amends D-038)
+- **Decision:** Qwen also returns an anchor: the 1–3 word system the topic is about (e.g. "biomass pyrolysis"). Code appends the anchor to any query that shares no word with it. Qwen writes 7 queries, one per fixed, topic-independent branch: analysis or measurement methods, model types, parameter estimation, components or sub-systems, data-driven methods, applications or scale-up, foundational methods of the field.
+- **Why:** the first automatic run reached 8.1% kept recall against 11.8% for hand-written queries. Three of its five queries had no topic word ("distributed activation energy method", "thermogravimetric analysis data fitting", "lumped kinetic scheme optimization"), so they searched the whole field (coal, polymers), and one drifted to catalysis. Anchoring and fixed branches are topic-independent, so they don't fit the system to this one topic.
+- **Rejected:** topic-specific query templates (overfits); accepting the gap (Hermes would get weaker discovery than a hand-run); a cloud model for queries now (D-033; cloud scoping returns at plan step 14)
+- **Date:** 2026-11-25
+
+### D-042 — Query terms from the literature itself: keyword feedback round (replaces the fixed branches of D-041; keeps its anchor rule)
+- **Decision:** Qwen writes 5 free-form queries as in D-038, with the D-041 anchor rule. After those searches, the most frequent OpenAlex keywords across the search hits (weighted by keyword score, excluding words already in the queries) become up to 3 extra anchored queries, searched before expansion. Query strategies are compared on pool recall, since a bigger pool lowers recall after the fixed 300 cut.
+- **Why:** fixed branches made Qwen echo the branch names ("analysis measurement methods characterize biomass pyrolysis") instead of naming techniques, and kept recall fell to 5.4%. A 9B model doesn't reliably know a field's technique names; the papers found in the first round do. Using their keywords (pseudo-relevance feedback, a standard search technique) needs no topic-specific rules.
+- **Rejected:** few-shot examples of technique names (topic-specific); more queries from Qwen (more generic queries, bigger pool, harsher cut); waiting for cloud scoping (plan step 14) with weak discovery until then
+- **Date:** 2026-11-25

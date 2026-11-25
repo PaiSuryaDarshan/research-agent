@@ -93,6 +93,8 @@ Preliminary discovery-recall runs, 2026-11-25. Topic: kinetic modelling of bioma
 | Fair | 5, hand-written | 12.9% | 11.8% |
 | Fair, D-037 ranking (300 + 198 foundational kept) | 5, hand-written | 16.1% (pool 21.5%) | 16.1% |
 | Fair, D-040 threshold 8 (300 + 3 foundational kept) | 5, hand-written | 11.8% (pool 21.5%) | 11.8% |
+| Fair, D-040, automatic queries (D-038) | 5, Qwen | 8.6% (pool 15.6%) | 8.1% |
+| Fair, anchored fixed-branch queries (D-041) | 8, Qwen | 5.4% (pool 14.5%) | 5.4% |
 
 Finding so far: several queries covering the topic's branches (model-free, DAEM, lumped schemes, ML) raised recall 2.7×. With 5 queries, recall in the full pool of 1,249 papers was 21.5% before the top-300 cut and 12.9% after: the cut removed 16 of 40 found references, including classic TGA-method papers (Kissinger 1957, Coats–Redfern 1964, Ozawa 1966) with low keyword and recency scores. Screening excluded Friedman's 1964 method paper ("phenolic plastic" in the title): foundational method papers don't match the topic literally. Fix: D-037.
 
