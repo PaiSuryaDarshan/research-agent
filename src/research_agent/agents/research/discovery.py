@@ -31,7 +31,7 @@ def discover(
     fill_abstracts: bool = True,
     abstract_lookup: AbstractLookup | None = None,
     exclude: Sequence[str] = (),
-    foundational_min: int = 3,
+    foundational_min: int | None = None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     queries = list(queries) or [topic]
     if max_per_query < 1:
@@ -40,13 +40,14 @@ def discover(
         raise ValueError("top_k must be non-negative.")
     if max_candidates < 1:
         raise ValueError("max_candidates must be at least 1.")
-    if foundational_min < 1:
+    if foundational_min is not None and foundational_min < 1:
         raise ValueError("--foundational-min must be at least 1.")
     if any(not re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", id_.strip(), re.I) for id_ in exclude):
         raise ValueError("--exclude requires an OpenAlex work ID such as W123.")
     excluded_ids = {work_id(id_.strip()) for id_ in exclude}
     options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, foundational_min)
     settings = dotenv_values(Path(".env"), interpolate=False)
+    s2_key = (settings.get("SEMANTIC_SCHOLAR_API_KEY") or "").strip()
     if client is None:
         key = openalex_key(settings)
         with httpx.Client(timeout=30.0) as http:
@@ -54,13 +55,14 @@ def discover(
     else:
         ranked, stats = _collect(client, *options)
 
+    stats.s2_key_found = bool(s2_key)
     stats.abstracts_before = sum(bool(candidate.abstract) for candidate in ranked)
     stats.calls_per_api = {"openalex": stats.api_calls, "semantic_scholar": 0, "crossref": 0}
     if fill_abstracts and any(candidate.doi and not candidate.abstract for candidate in ranked):
         if abstract_lookup is None:
             with httpx.Client(timeout=15.0, headers={"User-Agent": "research-agent/0.1"}) as http:
                 abstract_lookup = AbstractLookup(
-                    http, http, s2_key=(settings.get("SEMANTIC_SCHOLAR_API_KEY") or "").strip(),
+                    http, http, s2_key=s2_key,
                     email=getenv("OPENALEX_EMAIL") or settings.get("OPENALEX_EMAIL"),
                 )
                 _fill_abstracts(ranked, stats, abstract_lookup)
@@ -115,7 +117,7 @@ def _collect(
     top_k: int,
     max_candidates: int,
     excluded_ids: set[str],
-    foundational_min: int,
+    foundational_min: int | None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     candidates: dict[tuple[str, str], Candidate] = {}
     search_results: list[Candidate] = []
@@ -129,6 +131,9 @@ def _collect(
         hits[query] = hits.get(query, 0) + len(results)
         search_results.extend(results)
 
+    if foundational_min is None:
+        # Integer ceiling of six percent of eligible, pre-deduplication search hits.
+        foundational_min = max(3, (6 * len(search_results) + 99) // 100)
     _merge_candidates(candidates, search_results)
     today = datetime.now(UTC).date()
     references = backward(search_results, client, excluded_ids=excluded_ids) if expand else []

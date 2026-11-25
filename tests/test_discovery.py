@@ -325,6 +325,21 @@ def test_foundational_protection_adds_paper_after_cut(tmp_path: Path, monkeypatc
     assert "Foundational: 1 | Added beyond cap: 1" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(("hits", "override", "expected"), [(124, None, 8), (20, None, 3), (124, 2, 2)])
+def test_foundational_threshold_scales_or_uses_override(hits, override, expected):
+    def handler(request: httpx.Request) -> httpx.Response:
+        start = 1 if request.url.params["search"] == "first" else hits // 2 + 1
+        return httpx.Response(200, json={"results": [work(i) for i in range(start, start + hits // 2)]})
+
+    with client(handler) as http:
+        _, stats = discover(
+            "Topic", ["first", "second"], hits // 2, expand=False, fill_abstracts=False,
+            client=OpenAlexClient(http, KEY), foundational_min=override,
+        )
+    assert sum(stats.per_query_hits.values()) == hits
+    assert stats.model_dump()["foundational_min"] == expected
+
+
 def test_cli_no_expand_and_no_abstracts_skip_extra_calls(tmp_path: Path, monkeypatch, capsys):
     references = ["W3"]
 
@@ -403,7 +418,9 @@ def test_crossref_retries_and_cleans_jats(monkeypatch):
     assert filled.abstract == "Existing text"
 
 
-def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, caplog):
+def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, caplog, monkeypatch):
+    delays = []
+    monkeypatch.setattr("research_agent.agents.research.abstracts.sleep", delays.append)
     def search(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": [
             work(1, display_name="Topic result", doi="10.1/keep"),
@@ -414,7 +431,7 @@ def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, ca
         if request.url.host == "api.semanticscholar.org":
             assert request.headers["x-api-key"] == KEY
             assert json.loads(request.content) == {"ids": ["DOI:10.1/keep"]}
-            raise httpx.ConnectError(f"x-api-key={KEY}", request=request)
+            return httpx.Response(503, text=f"x-api-key={KEY}")
         assert request.url.path == "/works/10.1/keep"
         assert "x-api-key" not in request.headers
         return httpx.Response(200, json={"message": {"abstract": "<p>Fallback text.</p>"}})
@@ -426,11 +443,36 @@ def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, ca
         )
     assert (stats.abstracts_before, stats.abstracts_after) == (0, 1)
     assert stats.abstract_sources["crossref"] == 1
-    assert stats.calls_per_api == {"openalex": 1, "semantic_scholar": 1, "crossref": 1}
+    assert stats.calls_per_api == {"openalex": 1, "semantic_scholar": 4, "crossref": 1}
+    assert delays == [2, 4, 8]
     assert stats.abstract_lookup_failures == {"semantic_scholar": 1}
     folder = save_run("Topic", [], 2, candidates, stats, runs_dir=tmp_path)
+    assert json.loads((folder / "run.json").read_text(encoding="utf-8"))["stats"]["abstract_lookup_failures"] == {
+        "semantic_scholar": 1,
+    }
     pool = (folder / "all_candidates.jsonl").read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["abstract_source"] for line in pool] == ["none", "none"]
     for output in [caplog.text, *(file.read_text(encoding="utf-8") for file in folder.iterdir())]:
         assert KEY not in output
         assert "x-api-key" not in output
+
+
+@pytest.mark.parametrize("retry_status", [429, 502])
+def test_s2_batch_succeeds_after_retry(monkeypatch, retry_status):
+    elapsed = []
+    monkeypatch.setattr("research_agent.agents.research.abstracts.sleep", elapsed.append)
+    statuses = iter([retry_status, 200])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content) == {"ids": ["DOI:10.1/test"]}
+        assert request.headers["x-api-key"] == KEY
+        return httpx.Response(next(statuses), json=[{"abstract": "Recovered."}])
+
+    pending = candidate(1, doi="10.1/test")
+    with client(handler) as http:
+        lookup = AbstractLookup(http, http, s2_key=KEY)
+        lookup.fill_from_s2([pending])
+    assert elapsed == [2]
+    assert lookup.calls["semantic_scholar"] == 2
+    assert lookup.failures["semantic_scholar"] == 0
+    assert pending.abstract == "Recovered."

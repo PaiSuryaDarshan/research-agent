@@ -73,6 +73,7 @@ def _discover(args: argparse.Namespace) -> int:
     print(f"Forward added: {stats.forward_added}")
     print(f"After de-dup: {stats.total_after_dedup}")
     print(f"Kept: {stats.kept}")
+    print(f"Foundational threshold: {stats.foundational_min}")
     print(f"Foundational: {stats.foundational_count} | Added beyond cap: {stats.foundational_added}")
     if stats.top_foundational:
         print("Top foundational papers (search citations | year | title)")
@@ -81,6 +82,7 @@ def _discover(args: argparse.Namespace) -> int:
     print(f"Abstract coverage: {stats.abstracts_before}/{stats.kept} before, "
           f"{stats.abstracts_after}/{stats.kept} after")
     print("Abstract sources: " + ", ".join(f"{source}={count}" for source, count in stats.abstract_sources.items()))
+    print(f"SEMANTIC_SCHOLAR_API_KEY found: {'yes' if stats.s2_key_found else 'no'}")
     print(f"API calls: {sum(stats.calls_per_api.values())} ("
           + ", ".join(f"{api}={count}" for api, count in stats.calls_per_api.items()) + ")")
     if stats.abstract_lookup_failures:
@@ -162,8 +164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     discovery.add_argument("--no-abstracts", action="store_true", help="Skip abstract fallback lookups.")
     discovery.add_argument("--top-k", type=int, default=5, help="Number of seeds for forward expansion.")
     discovery.add_argument("--max-candidates", type=int, default=300, help="Maximum ranked candidates to keep.")
-    discovery.add_argument("--foundational-min", type=int, default=3, metavar="N",
-                           help="Minimum citing search hits for foundational protection.")
+    discovery.add_argument("--foundational-min", type=int, metavar="N",
+                           help="Override the minimum citing search hits (default: 6%% of hits rounded up, at least 3).")
     discovery.add_argument("--exclude", action="append", default=[], metavar="WID",
                            help="Exclude an OpenAlex work before expansion. Repeat for multiple IDs.")
     screening = commands.add_parser("screen", help="Screen a discovery run with local LM Studio.")

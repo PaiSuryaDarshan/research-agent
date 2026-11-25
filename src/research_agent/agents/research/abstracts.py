@@ -50,21 +50,9 @@ class AbstractLookup:
 
     def fill_from_s2(self, candidates: Sequence[Candidate]) -> None:
         pending = [candidate for candidate in candidates if candidate.doi and not candidate.abstract]
-        headers = {"x-api-key": self._s2_key} if self._s2_key else {}
         for start in range(0, len(pending), 500):
             batch = pending[start : start + 500]
-            self._count_call("semantic_scholar", 0 if self._s2_key else 1.1)
-            try:
-                response = self._s2.post(
-                    S2_BATCH_URL,
-                    params={"fields": "externalIds,abstract,tldr"},
-                    json={"ids": [f"DOI:{candidate.doi}" for candidate in batch]},
-                    headers=headers,
-                    follow_redirects=False,
-                )
-                papers = response.json() if response.is_success else None
-            except (httpx.HTTPError, ValueError):
-                papers = None
+            papers = self._s2_batch([f"DOI:{candidate.doi}" for candidate in batch])
             if not isinstance(papers, list) or len(papers) != len(batch):
                 self.failures["semantic_scholar"] += 1
                 continue
@@ -75,6 +63,28 @@ class AbstractLookup:
                 tldr = paper.get("tldr")
                 if not candidate.abstract and isinstance(tldr, dict):
                     self._fill(candidate, tldr.get("text"), "s2_tldr")
+
+    def _s2_batch(self, ids: list[str]) -> object:
+        headers = {"x-api-key": self._s2_key} if self._s2_key else {}
+        for delay in (2, 4, 8, None):
+            self._count_call("semantic_scholar", 0 if self._s2_key else 1.1)
+            try:
+                response = self._s2.post(
+                    S2_BATCH_URL,
+                    params={"fields": "externalIds,abstract,tldr"},
+                    json={"ids": ids},
+                    headers=headers,
+                    follow_redirects=False,
+                )
+                if response.is_success:
+                    return response.json()
+            except (httpx.HTTPError, ValueError):
+                return None
+            status = response.status_code
+            if delay is None or (status != 429 and not 500 <= status <= 599):
+                break
+            sleep(delay)
+        return None
 
     def fill_from_crossref(self, candidates: Sequence[Candidate]) -> None:
         for candidate in candidates:
