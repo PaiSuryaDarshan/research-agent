@@ -179,3 +179,10 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Why:** the first recall test showed the cut removing classic method papers (Kissinger 1957, Coats–Redfern 1964, Ozawa 1966) and screening excluding Friedman's 1964 method paper, because their titles don't mention the topic. Counting out-links rewarded reviews with long reference lists; being cited by many on-topic papers is the real signal that a paper matters to the field. Search hits are topical by construction, so their citations are a safe test.
 - **Rejected:** only raising the cap (keeps the wrong signal and adds screening work); only lowering the keyword weight (lets off-topic papers in); asking Qwen to recognise classic methods (a 9B model can't be relied on for that)
 - **Date:** 2026-11-25
+
+### D-040 — Foundational threshold scales with the number of search hits (replaces "at least 3" in D-037)
+- **Decision:** a paper is foundational when at least max(3, ceil(0.06 × number of search hits)) search hits cite it; that is 8 for 124 hits. Foundational papers still bypass the cut and screening.
+- **Why:** with a fixed threshold of 3 and five queries (124 hits), 198 papers became foundational and 428 of 498 kept candidates skipped screening, so screening stopped narrowing anything (485 kept). The classic method papers (Kissinger, Coats–Redfern, Ozawa, Flynn–Wall, Friedman) are cited by 9–19 search hits, so a threshold of 8 keeps them all. The threshold must grow with the number of hits, since more queries mean more citations to everything.
+- **Rejected:** a fixed top-50 foundational list (ignores how strong the signal is); screening foundational papers anyway (Qwen excluded Friedman 1964 before)
+- **Note:** tuned on one topic; the second-topic recall test (plan step 5) checks it.
+- **Date:** 2026-11-25
