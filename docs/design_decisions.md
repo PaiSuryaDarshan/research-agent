@@ -154,3 +154,16 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Rejected:** expanding from every result (too many off-topic citers of classic papers); embedding relevance now (later, if keyword overlap proves weak); two hops (noise grows fast)
 - **Date:** 2026-11-25
 
+### D-032 — Abstract fallback: Semantic Scholar, then Crossref; record the source
+- **Decision:** after ranking, fill missing abstracts for kept candidates: Semantic Scholar paper batch lookup by DOI (abstract, else its TLDR), then Crossref for what is still missing. Each candidate records `abstract_source` (openalex / semantic_scholar / s2_tldr / crossref / none). Candidates with no abstract stay in and are screened on title, biased to keep (step 3).
+- **Why:** about 40% of the first OpenAlex results had no abstract, mostly from one publisher, and screening reads abstracts. A TLDR is a machine summary, so it is labelled separately and never used as evidence, only for screening.
+- **Rejected:** dropping candidates without abstracts (would drop landmark papers); fetching full texts just for screening (expensive; full texts come at step 5)
+- **Date:** 2026-11-25
+
+### D-033 — Local-only until cloud keys are bought (temporarily replaces D-016)
+- **Decision:** until I buy API keys, every LLM step (including scoping, gap check, synthesis, review and re-check) runs on Qwen in LM Studio, and the CLI default setup is `local`. The model layer builds the LM Studio client first; cloud clients (Anthropic, DeepSeek, Gemini) are built near the end, before the full benchmark. D-016 (optimized as default) comes back once keys exist.
+- **Why:** no paid keys yet; the whole pipeline can be built and tested end to end for free. The local setup is one of the four benchmark setups (D-017) anyway, so nothing built now is throwaway.
+- **Rejected:** buying keys now (not needed until cloud steps exist); stubbing cloud calls with fake outputs (tests nothing real)
+- **Note:** expect weaker synthesis and review from a 9B model; judge them only after cloud setups exist. The ledger gate (D-023) is unaffected, since extraction was always local.
+- **Date:** 2026-11-25
+
