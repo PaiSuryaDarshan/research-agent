@@ -1,12 +1,15 @@
 import logging
+import re
 from collections.abc import Sequence
 from datetime import date
+from os import getenv
 from time import sleep
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
-from .models import Candidate
+from .models import Candidate, normalize_doi, work_id
 
 WORKS_URL = "https://api.openalex.org/works"
 SELECT_FIELDS = (
@@ -30,6 +33,13 @@ logging.getLogger("httpx").addFilter(_redact_request_log)
 
 class OpenAlexError(Exception):
     """A discovery error safe to report without request or response details."""
+
+
+def openalex_key(settings: dict[str, str | None]) -> str:
+    key = (getenv("OPENALEX_API_KEY") or settings.get("OPENALEX_API_KEY") or "").strip()
+    if not key:
+        raise OpenAlexError("Set OPENALEX_API_KEY in .env or the environment.")
+    return key
 
 
 def _rebuild_abstract(index: dict[str, list[int]] | None) -> str | None:
@@ -68,12 +78,12 @@ class OpenAlexClient:
         self._api_key = api_key
         self.api_calls = 0
 
-    def _get_page(self, params: dict[str, str]) -> httpx.Response:
-        params = {**params, "select": SELECT_FIELDS, "api_key": self._api_key}
+    def _get_page(self, params: dict[str, str], url: str = WORKS_URL) -> httpx.Response:
+        params = {"select": SELECT_FIELDS, **params, "api_key": self._api_key}
         for attempt in range(4):
             self.api_calls += 1
             try:
-                response = self._client.get(WORKS_URL, params=params, follow_redirects=False)
+                response = self._client.get(url, params=params, follow_redirects=False)
             except httpx.RequestError:
                 break
             if response.is_success:
@@ -97,9 +107,31 @@ class OpenAlexClient:
             candidates.extend(works)
         return candidates
 
-    def lookup(self, ids: Sequence[str]) -> list[Candidate]:
-        works, _ = self._read_page({"filter": "openalex_id:" + "|".join(ids), "per_page": "50"}, 50)
+    def lookup(self, ids: Sequence[str], *, select: str = SELECT_FIELDS) -> list[Candidate]:
+        works, _ = self._read_page(
+            {"filter": "openalex_id:" + "|".join(ids), "per_page": "50", "select": select}, 50
+        )
         return works
+
+    def reference(self, identifier: str) -> Candidate:
+        identifier = identifier.strip()
+        if re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", identifier, re.I):
+            key = work_id(identifier)
+        else:
+            doi = normalize_doi(identifier)
+            if not doi or not re.fullmatch(r"10\.[0-9]+/\S+", doi):
+                raise ValueError("Enter a DOI or OpenAlex work ID for --reference.")
+            key = quote("doi:" + doi, safe=":/")
+        response = self._get_page(
+            {"select": "id,doi,display_name,referenced_works"}, f"{WORKS_URL}/{key}"
+        )
+        try:
+            data = response.json()
+            if isinstance(data["referenced_works"], list):
+                return _candidate(data, None)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+        raise OpenAlexError("OpenAlex did not return a usable reference list.")
 
     def citers(self, seed: str, since: date, limit: int) -> list[Candidate]:
         works, _ = self._read_page(

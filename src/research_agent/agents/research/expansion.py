@@ -6,9 +6,10 @@ from .openalex import OpenAlexClient
 
 
 def backward(
-    candidates: Sequence[Candidate], client: OpenAlexClient, min_cocited: int = 2
+    candidates: Sequence[Candidate], client: OpenAlexClient, min_cocited: int = 2,
+    *, excluded_ids: set[str] | None = None,
 ) -> list[Candidate]:
-    existing = {work_id(candidate.openalex_id) for candidate in candidates}
+    existing = {work_id(candidate.openalex_id) for candidate in candidates} | (excluded_ids or set())
     citing_works: dict[str, dict[tuple[str, str], str]] = {}
     for candidate in candidates:
         for reference in candidate.referenced_works:

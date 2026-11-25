@@ -9,8 +9,9 @@ import httpx
 from dotenv import dotenv_values
 
 from .agents.research.discovery import discover, save_run
-from .agents.research.openalex import OpenAlexError
+from .agents.research.openalex import OpenAlexClient, OpenAlexError, openalex_key
 from .agents.research.screening import screen_run
+from .benchmark_tools.recall import measure_recall
 from .llm.lmstudio import LMStudioClient, LMStudioError
 
 
@@ -56,6 +57,7 @@ def _discover(args: argparse.Namespace) -> int:
         candidates, stats = discover(
             args.topic, queries, args.max_per_query, expand=not args.no_expand,
             top_k=args.top_k, max_candidates=args.max_candidates, fill_abstracts=not args.no_abstracts,
+            exclude=args.exclude,
         )
         folder = save_run(args.topic, queries, args.max_per_query, candidates, stats)
     except (OpenAlexError, ValueError) as error:
@@ -84,6 +86,37 @@ def _discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _recall(args: argparse.Namespace) -> int:
+    try:
+        key = openalex_key(dotenv_values(Path(".env"), interpolate=False))
+        with httpx.Client(timeout=30.0) as http:
+            result, missed = measure_recall(args.folder, args.reference, OpenAlexClient(http, key))
+    except OpenAlexError as error:
+        print(error, file=sys.stderr)
+        return 2
+    except (OSError, ValueError, TypeError):
+        print("Could not measure recall. Check the run folder, files, and reference DOI or OpenAlex ID.", file=sys.stderr)
+        return 2
+    print(f"References: {result.n_references}")
+    for name in ("recall_candidates", "recall_kept"):
+        value = getattr(result, name)
+        print(f"{name}: {'null' if value is None else format(value, '.2%')}")
+    print(f"Leakage: {'yes' if result.leakage else 'no detected leakage'}")
+    if result.leakage:
+        locations = []
+        if result.reference_in_candidates:
+            locations.append("ranked candidates")
+        if result.reference_in_search:
+            locations.append("search hits before ranking")
+        print("WARNING: Reference review was present in " + " and ".join(locations) + ".", file=sys.stderr)
+    elif result.reference_in_search is None:
+        print("WARNING: This older run has no complete pre-ranking search record.", file=sys.stderr)
+    print("Most-cited references missed by candidates (year | citations | title)")
+    for row in missed:
+        print(f"{row.year or '?'} | {row.cited_by_count} | {row.title}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="research-agent",
@@ -106,16 +139,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     discovery.add_argument("--no-abstracts", action="store_true", help="Skip abstract fallback lookups.")
     discovery.add_argument("--top-k", type=int, default=5, help="Number of seeds for forward expansion.")
     discovery.add_argument("--max-candidates", type=int, default=300, help="Maximum ranked candidates to keep.")
+    discovery.add_argument("--exclude", action="append", default=[], metavar="WID",
+                           help="Exclude an OpenAlex work before expansion. Repeat for multiple IDs.")
     screening = commands.add_parser("screen", help="Screen a discovery run with local LM Studio.")
     screening.add_argument("folder", type=Path)
     screening.add_argument("--criteria", help="Additional inclusion criteria.")
     screening.add_argument("--limit", type=int, metavar="N", help="Screen only the first N candidates.")
+    recall = commands.add_parser("recall", help="Measure discovery recall against a reference review.")
+    recall.add_argument("folder", type=Path)
+    recall.add_argument("--reference", required=True, help="DOI or OpenAlex work ID of the reference review.")
     args = parser.parse_args(argv)
 
     if args.command == "discover":
         return _discover(args)
     if args.command == "screen":
         return _screen(args)
+    if args.command == "recall":
+        return _recall(args)
     print("pipeline not implemented yet")
     print(f"Topic: {args.topic}")
     print(f"Setup: {args.setup}")

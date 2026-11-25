@@ -38,9 +38,7 @@ class Candidate(BaseModel):
     @field_validator("doi")
     @classmethod
     def normalize_doi(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return re.sub(r"^https?://(?:dx\.)?doi\.org/", "", value.strip().lower()) or None
+        return normalize_doi(value)
 
 
 class DiscoveryStats(BaseModel):
@@ -56,6 +54,14 @@ class DiscoveryStats(BaseModel):
     abstract_sources: dict[AbstractSource, int] = Field(default_factory=dict)
     calls_per_api: dict[str, int] = Field(default_factory=dict)
     abstract_lookup_failures: dict[str, int] = Field(default_factory=dict)
+    excluded_ids: list[str] = Field(default_factory=list, exclude=True)
+    search_work_ids: list[str] = Field(default_factory=list, exclude=True)
+
+
+def normalize_doi(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return re.sub(r"^(?:doi:\s*|https?://(?:dx\.)?doi\.org/)", "", value.strip().lower()) or None
 
 
 def work_id(value: str) -> str:

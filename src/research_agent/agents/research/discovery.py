@@ -14,8 +14,8 @@ from dotenv import dotenv_values
 
 from .abstracts import AbstractLookup
 from .expansion import backward, forward
-from .models import AbstractSource, Candidate, DiscoveryStats
-from .openalex import OpenAlexClient, OpenAlexError
+from .models import AbstractSource, Candidate, DiscoveryStats, work_id
+from .openalex import OpenAlexClient, openalex_key
 from .ranking import RANKING_WEIGHTS, rank_candidates
 
 
@@ -30,6 +30,7 @@ def discover(
     max_candidates: int = 300,
     fill_abstracts: bool = True,
     abstract_lookup: AbstractLookup | None = None,
+    exclude: Sequence[str] = (),
 ) -> tuple[list[Candidate], DiscoveryStats]:
     queries = list(queries) or [topic]
     if max_per_query < 1:
@@ -38,12 +39,13 @@ def discover(
         raise ValueError("top_k must be non-negative.")
     if max_candidates < 1:
         raise ValueError("max_candidates must be at least 1.")
-    options = (topic, queries, max_per_query, expand, top_k, max_candidates)
+    if any(not re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", id_.strip(), re.I) for id_ in exclude):
+        raise ValueError("--exclude requires an OpenAlex work ID such as W123.")
+    excluded_ids = {work_id(id_.strip()) for id_ in exclude}
+    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids)
     settings = dotenv_values(Path(".env"), interpolate=False)
     if client is None:
-        key = (getenv("OPENALEX_API_KEY") or settings.get("OPENALEX_API_KEY") or "").strip()
-        if not key:
-            raise OpenAlexError("Set OPENALEX_API_KEY in .env or the environment.")
+        key = openalex_key(settings)
         with httpx.Client(timeout=30.0) as http:
             ranked, stats = _collect(OpenAlexClient(http, key), *options)
     else:
@@ -109,20 +111,26 @@ def _collect(
     expand: bool,
     top_k: int,
     max_candidates: int,
+    excluded_ids: set[str],
 ) -> tuple[list[Candidate], DiscoveryStats]:
     candidates: dict[tuple[str, str], Candidate] = {}
     search_results: list[Candidate] = []
     hits: dict[str, int] = {}
     initial_calls = client.api_calls
     for query in queries:
-        results = client.search(query, max_per_query)
+        results = [
+            work for work in client.search(query, max_per_query)
+            if work_id(work.openalex_id) not in excluded_ids
+        ]
         hits[query] = hits.get(query, 0) + len(results)
         search_results.extend(results)
 
     _merge_candidates(candidates, search_results)
     today = datetime.now(UTC).date()
-    references = backward(search_results, client) if expand else []
+    references = backward(search_results, client, excluded_ids=excluded_ids) if expand else []
     citers = forward(list(candidates.values()), client, top_k, today=today) if expand else []
+    references = [work for work in references if work_id(work.openalex_id) not in excluded_ids]
+    citers = [work for work in citers if work_id(work.openalex_id) not in excluded_ids]
     backward_added = _merge_candidates(candidates, references)
     forward_added = _merge_candidates(candidates, citers)
     ranked = rank_candidates(list(candidates.values()), topic, queries, today.year, max_candidates)
@@ -134,6 +142,8 @@ def _collect(
         backward_added=backward_added,
         forward_added=forward_added,
         kept=len(ranked),
+        excluded_ids=sorted(excluded_ids),
+        search_work_ids=list(dict.fromkeys(work_id(work.openalex_id) for work in search_results)),
     )
 
 
@@ -154,6 +164,8 @@ def save_run(
         "topic": topic,
         "queries": list(queries) or [topic],
         "max_per_query": max_per_query,
+        "excluded_ids": stats.excluded_ids,
+        "search_work_ids": stats.search_work_ids,
         "stats": stats.model_dump(),
         "ranking_weights": RANKING_WEIGHTS,
         "timestamp": now.isoformat(),
