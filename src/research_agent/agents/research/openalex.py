@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Sequence
+from datetime import date
 from time import sleep
 from typing import Any
 
@@ -37,7 +39,7 @@ def _rebuild_abstract(index: dict[str, list[int]] | None) -> str | None:
     return " ".join(word for _, word in words) or None
 
 
-def _candidate(work: dict[str, Any], query: str) -> Candidate:
+def _candidate(work: dict[str, Any], query: str | None) -> Candidate:
     authors = [
         author["display_name"]
         for authorship in work.get("authorships") or []
@@ -47,7 +49,7 @@ def _candidate(work: dict[str, Any], query: str) -> Candidate:
     return Candidate(
         openalex_id=work["id"],
         doi=work.get("doi"),
-        title=work["display_name"],
+        title=work.get("display_name") or "[Untitled]",
         year=work.get("publication_year"),
         type=work.get("type"),
         authors=authors[:5],
@@ -55,7 +57,8 @@ def _candidate(work: dict[str, Any], query: str) -> Candidate:
         cited_by_count=work.get("cited_by_count", 0),
         abstract=_rebuild_abstract(work.get("abstract_inverted_index")),
         referenced_works=work.get("referenced_works") or [],
-        found_by=[query],
+        found_by=[query] if query is not None else [],
+        via=[f"search:{query}"] if query is not None else [],
     )
 
 
@@ -65,14 +68,8 @@ class OpenAlexClient:
         self._api_key = api_key
         self.api_calls = 0
 
-    def _get_page(self, query: str, per_page: int, cursor: str) -> httpx.Response:
-        params = {
-            "search": query,
-            "per_page": str(per_page),
-            "select": SELECT_FIELDS,
-            "cursor": cursor,
-            "api_key": self._api_key,
-        }
+    def _get_page(self, params: dict[str, str]) -> httpx.Response:
+        params = {**params, "select": SELECT_FIELDS, "api_key": self._api_key}
         for attempt in range(4):
             self.api_calls += 1
             try:
@@ -92,15 +89,38 @@ class OpenAlexClient:
         cursor: str | None = "*"
         per_page = min(100, max_results)
         while cursor and len(candidates) < max_results:
-            response = self._get_page(query, per_page, cursor)
-            try:
-                page = response.json()
-                works = page["results"]
-                remaining = max_results - len(candidates)
-                candidates.extend(_candidate(work, query) for work in works[:remaining])
-                cursor = page.get("meta", {}).get("next_cursor") if works else None
-            except (AttributeError, KeyError, TypeError, ValueError):
-                break
-        else:
-            return candidates
+            works, cursor = self._read_page(
+                {"search": query, "per_page": str(per_page), "cursor": cursor},
+                max_results - len(candidates),
+                query,
+            )
+            candidates.extend(works)
+        return candidates
+
+    def lookup(self, ids: Sequence[str]) -> list[Candidate]:
+        works, _ = self._read_page({"filter": "openalex_id:" + "|".join(ids), "per_page": "50"}, 50)
+        return works
+
+    def citers(self, seed: str, since: date, limit: int) -> list[Candidate]:
+        works, _ = self._read_page(
+            {
+                "filter": f"cites:{seed},from_publication_date:{since.isoformat()}",
+                "sort": "cited_by_count:desc",
+                "per_page": str(limit),
+            },
+            limit,
+        )
+        return works
+
+    def _read_page(
+        self, params: dict[str, str], limit: int, query: str | None = None
+    ) -> tuple[list[Candidate], str | None]:
+        response = self._get_page(params)
+        try:
+            page = response.json()
+            works = [_candidate(work, query) for work in page["results"][:limit]]
+            cursor = page.get("meta", {}).get("next_cursor") if works else None
+            return works, cursor
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
         raise OpenAlexError("OpenAlex returned an invalid works response.")

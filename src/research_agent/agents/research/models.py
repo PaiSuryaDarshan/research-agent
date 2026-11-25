@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Candidate(BaseModel):
@@ -15,6 +15,19 @@ class Candidate(BaseModel):
     abstract: str | None
     referenced_works: list[str]
     found_by: list[str]
+    via: list[str] = Field(default_factory=list)
+    graph: float = 0.0
+    cites_per_year: float = 0.0
+    recency: float = 0.0
+    keyword: float = 0.0
+    score: float = 0.0
+    rank: int = 0
+
+    @property
+    def dedup_key(self) -> tuple[str, str]:
+        if self.doi:
+            return "doi", self.doi
+        return "id", work_id(self.openalex_id)
 
     @field_validator("doi")
     @classmethod
@@ -29,3 +42,10 @@ class DiscoveryStats(BaseModel):
     total_before_dedup: int
     total_after_dedup: int
     api_calls: int
+    backward_added: int = 0
+    forward_added: int = 0
+    kept: int = 0
+
+
+def work_id(value: str) -> str:
+    return value.rstrip("/").rsplit("/", 1)[-1].upper()
