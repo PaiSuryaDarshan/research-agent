@@ -21,7 +21,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-The available setups are `premium`, `optimized`, `budget`, and `local`. The default is `optimized`.
+The available setups are `premium`, `optimized`, `budget`, and `local`. The default is `local`.
 
 ## Pipeline diagram
 

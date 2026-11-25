@@ -1,17 +1,20 @@
 import json
 import re
+from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from os import getenv
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import get_args
 from unicodedata import normalize
 
 import httpx
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
+from .abstracts import AbstractLookup
 from .expansion import backward, forward
-from .models import Candidate, DiscoveryStats
+from .models import AbstractSource, Candidate, DiscoveryStats
 from .openalex import OpenAlexClient, OpenAlexError
 from .ranking import RANKING_WEIGHTS, rank_candidates
 
@@ -25,6 +28,8 @@ def discover(
     expand: bool = True,
     top_k: int = 5,
     max_candidates: int = 300,
+    fill_abstracts: bool = True,
+    abstract_lookup: AbstractLookup | None = None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     queries = list(queries) or [topic]
     if max_per_query < 1:
@@ -34,14 +39,46 @@ def discover(
     if max_candidates < 1:
         raise ValueError("max_candidates must be at least 1.")
     options = (topic, queries, max_per_query, expand, top_k, max_candidates)
+    settings = dotenv_values(Path(".env"), interpolate=False)
     if client is None:
-        load_dotenv(Path(".env"))
-        key = getenv("OPENALEX_API_KEY", "").strip()
+        key = (getenv("OPENALEX_API_KEY") or settings.get("OPENALEX_API_KEY") or "").strip()
         if not key:
             raise OpenAlexError("Set OPENALEX_API_KEY in .env or the environment.")
         with httpx.Client(timeout=30.0) as http:
-            return _collect(OpenAlexClient(http, key), *options)
-    return _collect(client, *options)
+            ranked, stats = _collect(OpenAlexClient(http, key), *options)
+    else:
+        ranked, stats = _collect(client, *options)
+
+    stats.abstracts_before = sum(bool(candidate.abstract) for candidate in ranked)
+    stats.calls_per_api = {"openalex": stats.api_calls, "semantic_scholar": 0, "crossref": 0}
+    if fill_abstracts and any(candidate.doi and not candidate.abstract for candidate in ranked):
+        if abstract_lookup is None:
+            with httpx.Client(timeout=15.0, headers={"User-Agent": "research-agent/0.1"}) as http:
+                abstract_lookup = AbstractLookup(
+                    http, http, s2_key=(settings.get("SEMANTIC_SCHOLAR_API_KEY") or "").strip(),
+                    email=getenv("OPENALEX_EMAIL") or settings.get("OPENALEX_EMAIL"),
+                )
+                _fill_abstracts(ranked, stats, abstract_lookup)
+        else:
+            _fill_abstracts(ranked, stats, abstract_lookup)
+    stats.abstracts_after = sum(bool(candidate.abstract) for candidate in ranked)
+    counts = Counter(candidate.abstract_source for candidate in ranked)
+    stats.abstract_sources = {source: counts[source] for source in get_args(AbstractSource)}
+    return ranked, stats
+
+
+def _fill_abstracts(
+    candidates: Sequence[Candidate], stats: DiscoveryStats, lookup: AbstractLookup
+) -> None:
+    initial_calls = lookup.calls.copy()
+    initial_failures = lookup.failures.copy()
+    lookup.fill_from_s2(candidates)
+    lookup.fill_from_crossref(candidates)
+    stats.calls_per_api.update({api: calls - initial_calls[api] for api, calls in lookup.calls.items()})
+    stats.abstract_lookup_failures = {
+        api: failures - initial_failures[api] for api, failures in lookup.failures.items()
+        if failures > initial_failures[api]
+    }
 
 
 def _merge_candidates(
@@ -58,6 +95,8 @@ def _merge_candidates(
             "found_by": list(dict.fromkeys([*existing.found_by, *candidate.found_by])),
             "via": list(dict.fromkeys([*existing.via, *candidate.via])),
             "referenced_works": list(dict.fromkeys([*existing.referenced_works, *candidate.referenced_works])),
+            "abstract": existing.abstract or candidate.abstract,
+            "abstract_source": existing.abstract_source if existing.abstract else candidate.abstract_source,
         })
     return len(candidates) - initial_count
 

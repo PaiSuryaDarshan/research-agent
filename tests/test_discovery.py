@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from research_agent.agents.research.abstracts import AbstractLookup
 from research_agent.agents.research.discovery import discover, save_run
 from research_agent.agents.research.expansion import backward, forward
 from research_agent.agents.research.models import Candidate
@@ -45,6 +46,7 @@ def test_maps_work_and_rebuilds_abstract():
     with client(lambda _: httpx.Response(200, json={"results": [payload, sparse_payload]})) as http:
         candidate, sparse = OpenAlexClient(http, KEY).search("query", 10)
     assert candidate.abstract == "More evidence means evidence"
+    assert candidate.abstract_source == "openalex"
     assert candidate.doi == "10.1234/example"
     assert candidate.authors == [f"Author {i}" for i in range(5)]
     assert candidate.venue == "Journal"
@@ -73,7 +75,8 @@ def test_dedup_and_saved_run(tmp_path: Path, caplog):
     queries = ["first", "second"]
     with client(handler) as http:
         candidates, stats = discover(
-            "A topic!", queries, 50, client=OpenAlexClient(http, KEY), expand=False
+            "A topic!", queries, 50, client=OpenAlexClient(http, KEY),
+            expand=False, fill_abstracts=False,
         )
     assert [item.found_by for item in candidates] == [queries, queries]
     assert [item.via for item in candidates] == [["search:first", "search:second"]] * 2
@@ -85,6 +88,11 @@ def test_dedup_and_saved_run(tmp_path: Path, caplog):
         "backward_added": 0,
         "forward_added": 0,
         "kept": 2,
+        "abstracts_before": 0,
+        "abstracts_after": 0,
+        "abstract_sources": dict.fromkeys(("openalex", "semantic_scholar", "s2_tldr", "crossref"), 0) | {"none": 2},
+        "calls_per_api": {"openalex": 2, "semantic_scholar": 0, "crossref": 0},
+        "abstract_lookup_failures": {},
     }
 
     folder = save_run("A topic!", queries, 50, candidates, stats, runs_dir=tmp_path)
@@ -245,7 +253,9 @@ def test_discovery_merges_all_provenance_and_expands_only_search_seeds():
         return httpx.Response(200, json={"results": results})
 
     with client(handler) as http:
-        candidates, stats = discover("Topic", ["first", "second"], 25, client=OpenAlexClient(http, KEY))
+        candidates, stats = discover(
+            "Topic", ["first", "second"], 25, client=OpenAlexClient(http, KEY), fill_abstracts=False
+        )
     assert len(filters) == 3
     assert [filter_.split(",")[0] for filter_ in filters] == ["openalex_id:W3", "cites:W1", "cites:W2"]
     merged = next(item for item in candidates if item.doi == "10.1/a")
@@ -274,21 +284,110 @@ def test_ranking_components_order_and_cut():
     assert [item.rank for item in inputs] == [0, 0, 0]
 
 
-def test_cli_no_expand_skips_expansion(tmp_path: Path, monkeypatch, capsys):
+def test_cli_no_expand_and_no_abstracts_skip_extra_calls(tmp_path: Path, monkeypatch, capsys):
     references = ["W3"]
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "api.openalex.org"
         assert "filter" not in request.url.params
         return httpx.Response(200, json={"results": [
-            work(1, referenced_works=references), work(2, referenced_works=references),
+            work(1, doi="10.1/x", referenced_works=references), work(2, referenced_works=references),
         ]})
 
     http = client(handler)
     monkeypatch.setattr("research_agent.agents.research.discovery.httpx.Client", lambda **_: http)
     monkeypatch.setenv("OPENALEX_API_KEY", KEY)
     monkeypatch.chdir(tmp_path)
-    assert main(["discover", "topic", "--no-expand", "--max-candidates", "1"]) == 0
+    assert main(["discover", "topic", "--no-expand", "--no-abstracts", "--max-candidates", "1"]) == 0
     output = capsys.readouterr().out
     assert "API calls: 1" in output
     assert "After de-dup: 2" in output
     assert "Kept: 1" in output
+
+
+def test_s2_batches_nulls_and_tldr_priority(monkeypatch):
+    batches = []
+    waits = []
+    monkeypatch.setattr("research_agent.agents.research.abstracts.monotonic", lambda: 0.0)
+    monkeypatch.setattr("research_agent.agents.research.abstracts.sleep", waits.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.params["fields"] == "externalIds,abstract,tldr"
+        assert "x-api-key" not in request.headers
+        ids = json.loads(request.content)["ids"]
+        batches.append(ids)
+        papers = [None] * len(ids)
+        if len(batches) == 1:
+            papers[1] = {"abstract": "<p>Abstract: Actual text.</p>", "tldr": {"text": "Ignored."}}
+            papers[2] = {"abstract": None, "tldr": {"text": "Short summary."}}
+        return httpx.Response(200, json=papers)
+
+    candidates = [candidate(i, doi=f"10.1/{i}") for i in range(501)]
+    no_doi = candidate(502)
+    with client(handler) as http:
+        AbstractLookup(http, http).fill_from_s2([*candidates, no_doi])
+    assert [len(batch) for batch in batches] == [500, 1]
+    assert batches[1] == ["DOI:10.1/500"]
+    assert waits == [1.1]
+    assert (candidates[0].abstract, candidates[0].abstract_source) == (None, "none")
+    assert (candidates[1].abstract, candidates[1].abstract_source) == ("Actual text.", "semantic_scholar")
+    assert (candidates[2].abstract, candidates[2].abstract_source) == ("Short summary.", "s2_tldr")
+    assert (no_doi.abstract, no_doi.abstract_source) == (None, "none")
+
+
+def test_crossref_retries_and_cleans_jats(monkeypatch):
+    delays = []
+    monkeypatch.setattr("research_agent.agents.research.abstracts.monotonic", lambda: 0.0)
+    monkeypatch.setattr("research_agent.agents.research.abstracts.sleep", delays.append)
+    responses = iter([429, 503, 200])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/works/10.1/find"
+        assert request.url.params["mailto"] == "reader@example.org"
+        assert "x-api-key" not in request.headers
+        return httpx.Response(next(responses), json={"message": {"abstract": (
+            "<jats:title>Abstract</jats:title><jats:p>First &amp; second.</jats:p>"
+            "<jats:p>CO<jats:sub>2</jats:sub>  observed.</jats:p>"
+        )}})
+
+    filled = candidate(1, doi="10.1/skip", abstract="Existing text", abstract_source="s2_tldr")
+    pending = candidate(2, doi="10.1/find")
+    with client(handler) as http:
+        lookup = AbstractLookup(http, http, email="reader@example.org")
+        lookup.fill_from_crossref([filled, pending, candidate(3)])
+    assert delays == [1, 0.2, 2, 0.2]
+    assert lookup.calls["crossref"] == 3
+    assert (pending.abstract, pending.abstract_source) == ("First & second. CO2 observed.", "crossref")
+    assert filled.abstract == "Existing text"
+
+
+def test_fallback_runs_after_cut_and_keeps_key_out_of_outputs(tmp_path: Path, caplog):
+    def search(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [
+            work(1, display_name="Topic result", doi="10.1/keep"),
+            work(2, doi="10.1/discard"),
+        ]})
+
+    def lookup(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.semanticscholar.org":
+            assert request.headers["x-api-key"] == KEY
+            assert json.loads(request.content) == {"ids": ["DOI:10.1/keep"]}
+            raise httpx.ConnectError(f"x-api-key={KEY}", request=request)
+        assert request.url.path == "/works/10.1/keep"
+        assert "x-api-key" not in request.headers
+        return httpx.Response(200, json={"message": {"abstract": "<p>Fallback text.</p>"}})
+
+    with client(search) as http, client(lookup) as fallback:
+        candidates, stats = discover(
+            "Topic", [], 2, client=OpenAlexClient(http, "openalex-test-key"),
+            expand=False, max_candidates=1, abstract_lookup=AbstractLookup(fallback, fallback, s2_key=KEY),
+        )
+    assert (stats.abstracts_before, stats.abstracts_after) == (0, 1)
+    assert stats.abstract_sources["crossref"] == 1
+    assert stats.calls_per_api == {"openalex": 1, "semantic_scholar": 1, "crossref": 1}
+    assert stats.abstract_lookup_failures == {"semantic_scholar": 1}
+    folder = save_run("Topic", [], 2, candidates, stats, runs_dir=tmp_path)
+    for output in [caplog.text, *(file.read_text(encoding="utf-8") for file in folder.iterdir())]:
+        assert KEY not in output
+        assert "x-api-key" not in output

@@ -18,9 +18,9 @@ def test_run_echoes_topic(capsys):
     assert f"Topic: {topic}" in capsys.readouterr().out.splitlines()
 
 
-def test_run_defaults_to_optimized(capsys):
+def test_run_defaults_to_local(capsys):
     main(["run", "Battery interfaces"])
-    assert "Setup: optimized" in capsys.readouterr().out.splitlines()
+    assert "Setup: local" in capsys.readouterr().out.splitlines()
 
 
 def test_run_rejects_unknown_setup(capsys):

@@ -1,6 +1,9 @@
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+AbstractSource = Literal["openalex", "semantic_scholar", "s2_tldr", "crossref", "none"]
 
 
 class Candidate(BaseModel):
@@ -13,6 +16,9 @@ class Candidate(BaseModel):
     venue: str | None
     cited_by_count: int
     abstract: str | None
+    abstract_source: AbstractSource = Field(
+        default_factory=lambda data: "openalex" if data["abstract"] else "none"
+    )
     referenced_works: list[str]
     found_by: list[str]
     via: list[str] = Field(default_factory=list)
@@ -45,6 +51,11 @@ class DiscoveryStats(BaseModel):
     backward_added: int = 0
     forward_added: int = 0
     kept: int = 0
+    abstracts_before: int = 0
+    abstracts_after: int = 0
+    abstract_sources: dict[AbstractSource, int] = Field(default_factory=dict)
+    calls_per_api: dict[str, int] = Field(default_factory=dict)
+    abstract_lookup_failures: dict[str, int] = Field(default_factory=dict)
 
 
 def work_id(value: str) -> str:
