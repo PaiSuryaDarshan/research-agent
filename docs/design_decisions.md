@@ -4,7 +4,7 @@ What research-agent *is*: architecture, agents, model allocation. How it's built
 
 ## Architecture
 
-![Pipeline](docs/science_research_agent_whiteboard.png)
+![Pipeline](science_research_agent_whiteboard.png)
 Live whiteboard: https://claude.ai/artifact/QoEpAaVBPE6A8E1Bw37TQj
 
 **Core idea:** expensive reasoning is token-light; token-heavy reading needs only moderate reasoning. So heavy reading runs locally (costs GPU time, not money) and cloud models get small, compact inputs for the hard thinking.
@@ -120,7 +120,7 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 
 ### D-015 — Cost levers: lean token budget + batch
 - **Decision:** compact ledger for synthesis; reviewer gets only the cited entries plus a one-line index of the whole ledger; one gap-check round by default; batch APIs where available.
-- **Why:** I asked to get below $0.50 per report; most of the cost was input tokens that weren't needed. Optimized setup: ≈ $0.27 per report, $0.14 with batch (see `design/cost_model.md`).
+- **Why:** I asked to get below $0.50 per report; most of the cost was input tokens that weren't needed. Optimized setup: ≈ $0.27 per report, $0.14 with batch (see `cost_model.md`).
 - **Rejected:** cutting synthesis output length or skipping review (they're where the quality comes from)
 - **Date:** 2026-11-25
 
@@ -147,3 +147,10 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Why:** I want the agent and benchmark to be useful beyond chemistry; building one profile well first keeps the scope small, and chemistry is where I can grade quality as the domain expert (D-020).
 - **Rejected:** claiming all domains in the description now (the repo would promise more than it has); chemistry-only forever
 - **Date:** 2026-11-25
+
+### D-031 — Citation expansion and ranking rules (first version)
+- **Decision:** after search, expand one hop. Backward: fetch references cited by at least 2 search results (co-cited). Forward: for the 5 most-cited search results, fetch works citing them from the last 5 years, most-cited first, 50 each. Rank every candidate with a transparent weighted score saved per component: links to other candidates (graph position), citations per year (log), recency, and keyword overlap with the topic and queries. Keep the top 300. Each candidate records how it was found (`via`: search query, reference of, or citer of).
+- **Why:** the first OpenAlex run showed landmark papers missing from search but repeated across the results' reference lists (co-citation finds them), and forward citations of classics find recent work. Saved score components make the ranking checkable; keyword overlap is a cheap relevance filter until screening (step 3).
+- **Rejected:** expanding from every result (too many off-topic citers of classic papers); embedding relevance now (later, if keyword overlap proves weak); two hops (noise grows fast)
+- **Date:** 2026-11-25
+
