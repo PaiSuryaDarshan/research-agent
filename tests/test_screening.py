@@ -137,3 +137,28 @@ def test_missing_abstract_cannot_be_included(tmp_path: Path):
         stats = screen_run(tmp_path, LMStudioClient(http, "http://localhost:1234", "qwen"))
     assert stats["decisions"] == {"include": 1, "exclude": 0, "unsure": 1}
     assert stats["by_abstract_source"]["none"] == {"include": 0, "exclude": 0, "unsure": 1}
+
+
+def test_foundational_paper_is_included_without_model_call(tmp_path: Path):
+    make_run(tmp_path, 2)
+    path = tmp_path / "candidates.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    rows[1].update(foundational=True, foundational_count=4)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404)
+        posts.append(request)
+        return response('{"decision":"exclude","reason":"Off-topic."}')
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        stats = screen_run(tmp_path, LMStudioClient(http, "http://localhost:1234", "qwen"))
+    kept = json.loads((tmp_path / "screened.jsonl").read_text(encoding="utf-8"))
+    assert len(posts) == stats["foundational_included"] == 1
+    assert (kept["rank"], kept["decision"], kept["reason"]) == (
+        2, "include", "foundational: cited by 4 search hits"
+    )
+    assert stats["decisions"] == {"include": 1, "exclude": 1, "unsure": 0}
+    assert stats["total_tokens"] == 14

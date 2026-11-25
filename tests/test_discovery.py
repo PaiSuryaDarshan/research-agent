@@ -88,6 +88,10 @@ def test_dedup_and_saved_run(tmp_path: Path, caplog):
         "backward_added": 0,
         "forward_added": 0,
         "kept": 2,
+        "foundational_min": 3,
+        "foundational_count": 0,
+        "foundational_added": 0,
+        "top_foundational": [],
         "abstracts_before": 0,
         "abstracts_after": 0,
         "abstract_sources": dict.fromkeys(("openalex", "semantic_scholar", "s2_tldr", "crossref"), 0) | {"none": 2},
@@ -274,14 +278,51 @@ def test_ranking_components_order_and_cut():
     third = candidate(3, year=2026)
     inputs = [third, second, first]
     ranked = rank_candidates(inputs, "The biomass", ["biomass and pyrolysis"], 2026, 2)
-    assert [item.openalex_id for item in ranked] == [first.openalex_id, second.openalex_id]
+    assert [item.openalex_id for item in ranked] == [second.openalex_id, first.openalex_id]
     assert [item.rank for item in ranked] == [1, 2]
-    assert (ranked[0].graph, ranked[0].cites_per_year, ranked[0].recency, ranked[0].keyword) == (1, 1, 0, 0.5)
-    assert ranked[0].score == pytest.approx(0.725)
-    assert ranked[1].graph == ranked[1].recency == 0.5
-    assert ranked[1].keyword == 1
-    assert ranked[1].cites_per_year == pytest.approx(log1p(1) / log1p(10))
+    assert (ranked[1].graph, ranked[1].cites_per_year, ranked[1].recency, ranked[1].keyword) == (1, 1, 0, 0.5)
+    assert ranked[1].score == pytest.approx(0.725)
+    assert ranked[0].graph == 1
+    assert ranked[0].recency == 0.5
+    assert ranked[0].keyword == 1
+    assert ranked[0].cites_per_year == pytest.approx(log1p(1) / log1p(10))
     assert [item.rank for item in inputs] == [0, 0, 0]
+
+
+def test_log_indegree_counts_only_incoming_and_distinct_search_hits():
+    inputs = [
+        candidate(1, referenced_works=["W3", "W3", "W1", "W4"], via=["search:a", "search:b"]),
+        candidate(2, referenced_works=["W3"], via=["search:b"]),
+        candidate(3),
+        candidate(4, referenced_works=["W3"], via=["ref_of:W1"]),
+    ]
+    ranked = {item.openalex_id: item for item in rank_candidates(inputs, "", [], 2026, foundational_min=2)}
+    source, _, landmark, other = [ranked[item.openalex_id] for item in inputs]
+    assert source.graph == 0
+    assert landmark.graph == 1
+    assert other.graph == pytest.approx(log1p(1) / log1p(3))
+    assert landmark.foundational and landmark.foundational_count == 2
+    assert not other.foundational and other.foundational_count == 1
+    assert not any(item.foundational for item in rank_candidates(inputs, "", [], 2026))
+
+
+def test_foundational_protection_adds_paper_after_cut(tmp_path: Path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENALEX_API_KEY", KEY)
+    results = [
+        work(i, display_name="Topic", publication_year=2026, cited_by_count=100,
+             referenced_works=["W4"]) for i in (1, 2, 3)
+    ] + [work(4, display_name="Classic method", publication_year=1957)]
+    http = client(lambda _: httpx.Response(200, json={"results": results}))
+    monkeypatch.setattr(httpx, "Client", lambda **_: http)
+    assert main(["discover", "Topic", "--max-candidates", "1", "--no-expand", "--no-abstracts"]) == 0
+    folder, = Path("data/runs").iterdir()
+    kept = [json.loads(line) for line in (folder / "candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(row["rank"], row["foundational"]) for row in kept] == [(1, False), (4, True)]
+    stats = json.loads((folder / "run.json").read_text(encoding="utf-8"))["stats"]
+    assert stats["foundational_count"] == stats["foundational_added"] == 1
+    assert stats["top_foundational"] == [{"count": 3, "year": 1957, "title": "Classic method"}]
+    assert "Foundational: 1 | Added beyond cap: 1" in capsys.readouterr().out
 
 
 def test_cli_no_expand_and_no_abstracts_skip_extra_calls(tmp_path: Path, monkeypatch, capsys):

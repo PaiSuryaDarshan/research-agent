@@ -28,6 +28,8 @@ class Candidate(BaseModel):
     keyword: float = 0.0
     score: float = 0.0
     rank: int = 0
+    foundational: bool = False
+    foundational_count: int = 0
 
     @property
     def dedup_key(self) -> tuple[str, str]:
@@ -41,6 +43,12 @@ class Candidate(BaseModel):
         return normalize_doi(value)
 
 
+class FoundationalPaper(BaseModel):
+    count: int
+    year: int | None
+    title: str
+
+
 class DiscoveryStats(BaseModel):
     per_query_hits: dict[str, int]
     total_before_dedup: int
@@ -49,6 +57,10 @@ class DiscoveryStats(BaseModel):
     backward_added: int = 0
     forward_added: int = 0
     kept: int = 0
+    foundational_min: int = 3
+    foundational_count: int = 0
+    foundational_added: int = 0
+    top_foundational: list[FoundationalPaper] = Field(default_factory=list)
     abstracts_before: int = 0
     abstracts_after: int = 0
     abstract_sources: dict[AbstractSource, int] = Field(default_factory=dict)

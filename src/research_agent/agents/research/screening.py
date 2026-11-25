@@ -103,13 +103,13 @@ def screen_run(
     progress: Callable[[int, int, int], None] | None = None,
 ) -> dict:
     started = monotonic()
-    model_info = client.model_info()
     metadata_path = folder / "run.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     candidates = [
         Candidate.model_validate_json(line)
         for line in (folder / "candidates.jsonl").read_bytes().splitlines() if line.strip()
     ][:limit]
+    model_info = client.model_info() if any(not work.foundational for work in candidates) else "unavailable"
     cache_path = folder / "screening_cache.jsonl"
     cache = _read_cache(cache_path)
     rows: list[tuple[Candidate, CacheEntry]] = []
@@ -121,6 +121,17 @@ def screen_run(
             needs_separator = previous.read() != b"\n"
     with cache_path.open("a", encoding="utf-8", newline="\n") as output:
         for index, candidate in enumerate(candidates, start=1):
+            if candidate.foundational:
+                rows.append((candidate, CacheEntry(
+                    openalex_id=candidate.openalex_id,
+                    prompt_hash="",
+                    result=Decision(
+                        decision="include", reason=f"foundational: cited by {candidate.foundational_count} search hits"
+                    ),
+                )))
+                if progress:
+                    progress(index, len(candidates), cache_hits)
+                continue
             prompt = _prompt(candidate, metadata, criteria)
             fingerprint = json.dumps([client.model, SYSTEM_PROMPT, prompt, DECISION_SCHEMA], sort_keys=True)
             digest = sha256(fingerprint.encode("utf-8")).hexdigest()
@@ -168,6 +179,7 @@ def _stats(rows: list[tuple[Candidate, CacheEntry]]) -> dict:
         "decisions": {decision: counts[decision] for decision in decisions},
         "kept": counts["include"] + counts["unsure"],
         "errors": sum(entry.error for _, entry in rows),
+        "foundational_included": sum(candidate.foundational for candidate, _ in rows),
         "by_abstract_source": by_source,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,

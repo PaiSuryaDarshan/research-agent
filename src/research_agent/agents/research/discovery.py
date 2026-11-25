@@ -14,9 +14,9 @@ from dotenv import dotenv_values
 
 from .abstracts import AbstractLookup
 from .expansion import backward, forward
-from .models import AbstractSource, Candidate, DiscoveryStats, work_id
+from .models import AbstractSource, Candidate, DiscoveryStats, FoundationalPaper, work_id
 from .openalex import OpenAlexClient, openalex_key
-from .ranking import RANKING_WEIGHTS, rank_candidates
+from .ranking import RANKING_WEIGHTS, cut_candidates, rank_candidates
 
 
 def discover(
@@ -31,6 +31,7 @@ def discover(
     fill_abstracts: bool = True,
     abstract_lookup: AbstractLookup | None = None,
     exclude: Sequence[str] = (),
+    foundational_min: int = 3,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     queries = list(queries) or [topic]
     if max_per_query < 1:
@@ -39,10 +40,12 @@ def discover(
         raise ValueError("top_k must be non-negative.")
     if max_candidates < 1:
         raise ValueError("max_candidates must be at least 1.")
+    if foundational_min < 1:
+        raise ValueError("--foundational-min must be at least 1.")
     if any(not re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", id_.strip(), re.I) for id_ in exclude):
         raise ValueError("--exclude requires an OpenAlex work ID such as W123.")
     excluded_ids = {work_id(id_.strip()) for id_ in exclude}
-    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids)
+    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, foundational_min)
     settings = dotenv_values(Path(".env"), interpolate=False)
     if client is None:
         key = openalex_key(settings)
@@ -112,6 +115,7 @@ def _collect(
     top_k: int,
     max_candidates: int,
     excluded_ids: set[str],
+    foundational_min: int,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     candidates: dict[tuple[str, str], Candidate] = {}
     search_results: list[Candidate] = []
@@ -133,8 +137,14 @@ def _collect(
     citers = [work for work in citers if work_id(work.openalex_id) not in excluded_ids]
     backward_added = _merge_candidates(candidates, references)
     forward_added = _merge_candidates(candidates, citers)
-    pool = rank_candidates(list(candidates.values()), topic, queries, today.year, max_candidates=None)
-    ranked = [candidate.model_copy() for candidate in pool[:max_candidates]]
+    pool = rank_candidates(
+        list(candidates.values()), topic, queries, today.year,
+        max_candidates=None, foundational_min=foundational_min,
+    )
+    ranked = [work.model_copy() for work in cut_candidates(pool, max_candidates)]
+    foundational = sorted(
+        (work for work in pool if work.foundational), key=lambda work: -work.foundational_count
+    )
     return ranked, DiscoveryStats(
         per_query_hits=hits,
         total_before_dedup=len(search_results) + len(references) + len(citers),
@@ -143,6 +153,13 @@ def _collect(
         backward_added=backward_added,
         forward_added=forward_added,
         kept=len(ranked),
+        foundational_min=foundational_min,
+        foundational_count=len(foundational),
+        foundational_added=sum(work.rank > max_candidates for work in foundational),
+        top_foundational=[
+            FoundationalPaper(count=work.foundational_count, year=work.year, title=work.title)
+            for work in foundational[:15]
+        ],
         excluded_ids=sorted(excluded_ids),
         search_work_ids=list(dict.fromkeys(work_id(work.openalex_id) for work in search_results)),
         all_candidates=pool,
