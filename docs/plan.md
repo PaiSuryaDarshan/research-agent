@@ -29,7 +29,7 @@ A science research agent: give Hermes a topic and get a rigorous ~6-page review 
 14. Full benchmark: 4 setups × the topic set; blind grading
 
 ## Current step
-Discovery (step 2): OpenAlex search, one-hop expansion and ranking done; abstract fallback (D-032) next. All LLM steps local until step 13 (D-033).
+Discovery (step 2): OpenAlex search, one-hop expansion, ranking and abstract fallback done; screening (step 3) next. All LLM steps local until step 13 (D-033).
 
 ## Folder layout
 ```

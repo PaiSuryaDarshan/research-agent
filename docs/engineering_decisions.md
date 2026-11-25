@@ -55,3 +55,9 @@ How research-agent is built: stack, repo, workflow. What the system *is* lives i
 - **Why:** OpenAlex has the broadest free coverage, abstracts and reference lists in one call, which citation expansion needs next. A search call costs $0.001 against a free $1/day budget, so a topic costs about a cent. JSONL is easy to diff, append and read back; `data/` is gitignored, so no paper metadata enters the repo.
 - **Rejected:** all five sources at once (more code before anything is tested); a database (not needed yet)
 - **Date:** 2026-11-25
+
+### D-034 — Doc changes go inside Codex prompts (replaces the hand-over part of D-001)
+- **Decision:** Claude no longer hands over replacement doc files. Each Codex prompt that changes docs has a DOC EDITS section with exact, word-for-word edits (append this text / replace this line with that line) for files in `docs/`. Codex applies them verbatim and touches nothing else in `docs/`. Claude keeps the claude.ai Project copies in sync. Codex still never commits (D-001).
+- **Why:** downloading and dropping in files every step was tedious; one paste now covers code and docs.
+- **Rejected:** full replacement files (D-001's original hand-over); letting Codex write doc text itself (docs would drift from the decisions made with Claude)
+- **Date:** 2026-11-25
