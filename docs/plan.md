@@ -13,23 +13,26 @@ A science research agent: give Hermes a topic and get a rigorous ~6-page review 
 
 ## Order of work
 1. ~~Repo skeleton (Python package, CLI stub, tests, .gitignore)~~ ✅ done 2026-11-25
-2. Research agent, discovery: topic → seed queries → OpenAlex / Semantic Scholar / Crossref / arXiv / ChemRxiv → citation expansion (1 hop) → ranked, de-duplicated candidates ← next
-3. Research agent, screening: local Qwen reads titles and abstracts (keep if unsure); stopping rule
-4. Freeze the benchmark topic set and run the discovery-recall test (`benchmark.md`)
-5. Research agent, evidence: fetch full texts → MinerU → sections with DOI / page / section ids
-6. Evidence ledger: schema → local per-paper extraction (strict format + verbatim quote) → automatic checks
+2. ~~Discovery: OpenAlex search, one-hop citation expansion, ranking, abstract fallback~~ ✅ done 2026-11-25 (D-030, D-031, D-032, D-037)
+3. ~~Screening: local Qwen reads titles and abstracts, keep if unsure~~ ✅ done 2026-11-25 (D-035)
+4. Query generation: local Qwen turns the topic into research questions and branch queries (D-038) ← next
+5. Discovery-recall validation on a second topic with a strong reference review, automatic queries only; freeze the topic set (D-021, D-036)
+6. Thin `research-agent run` (topic → queries → discover → screen) on the plain state machine, plus the Hermes skill that calls it (D-039)
+7. Research agent, evidence: fetch full texts → MinerU → sections with DOI / page / section ids
+8. Evidence ledger: schema → local per-paper extraction (strict format + verbatim quote) → automatic checks
    → **minimum version done: topic in, evidence ledger out**
-7. Ledger accuracy test (D-023) with the quantisation comparison Q4_K_M / Q6_K / Q8_0 (D-024) → **gate: the Analyst isn't built until the ledger passes**
-8. Model layer, local first (D-033): LM Studio client; setups chosen by config, default `local`
-9. Analyst agent: scoping, gap check, synthesis & outline
-10. Writer + Editor/reviewer agents: draft → citation/quote checks → review with acceptance tests → targeted revision → re-check with escalation → finish
-11. Hermes skill wraps the CLI
-12. Token and cost logging per step (thinking tokens separately)
-13. Buy API keys; cloud clients (Anthropic, DeepSeek, Gemini) with thinking budgets (D-026) and batch for synthesis (D-025); default back to optimized (D-016)
-14. Full benchmark: 4 setups × the topic set; blind grading
+9. Ledger accuracy test (D-023) with the quantisation comparison Q4_K_M / Q6_K / Q8_0 (D-024) → **gate: the Analyst isn't built until the ledger passes**
+10. Model layer, local first (D-033): setups chosen by config, default `local`
+11. Analyst agent: scoping, gap check, synthesis & outline
+12. Writer + Editor/reviewer agents: draft → citation/quote checks → review with acceptance tests → targeted revision → re-check with escalation → finish
+13. Token and cost logging per step (thinking tokens separately)
+14. Buy API keys; cloud clients (Anthropic, DeepSeek, Gemini) with thinking budgets (D-026) and batch for synthesis (D-025); default back to optimized (D-016)
+15. Full benchmark: 4 setups × the topic set; blind grading
+
+More search sources (Semantic Scholar search, Crossref, arXiv, ChemRxiv) are added only if a recall test shows OpenAlex missing papers.
 
 ## Current step
-Step 4 in progress: ranking fix (D-037) tested on biomass pyrolysis. Next: validate on a second topic with a strong reference review (MOFs or MLIPs) before any more tuning. All LLM steps local until step 13 (D-033).
+Step 4: query generation (D-038), then the recall validation on a second topic (step 5). All LLM steps local until step 14 (D-033).
 
 ## Folder layout
 ```

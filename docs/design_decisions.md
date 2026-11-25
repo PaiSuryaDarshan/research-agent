@@ -186,3 +186,15 @@ Newest at the bottom. Never delete an entry: if a decision changes, add a new on
 - **Rejected:** a fixed top-50 foundational list (ignores how strong the signal is); screening foundational papers anyway (Qwen excluded Friedman 1964 before)
 - **Note:** tuned on one topic; the second-topic recall test (plan step 5) checks it.
 - **Date:** 2026-11-25
+
+### D-038 — Local query generation: research questions, then branch queries
+- **Decision:** `research-agent queries "<topic>"` asks Qwen (temperature 0, strict JSON) for 3–5 research questions and 5–8 search queries of 3–8 words, each covering a different branch of the topic (methods, models, materials or systems, applications, foundational methods). Code enforces the rules: the topic itself is always a query, near-duplicate queries are dropped, word limits are checked. `discover` uses them automatically when no `--query` is given. The questions are saved in run.json and added to the screening criteria.
+- **Why:** the recall test showed queries matter most: five hand-written branch queries raised recall 2.7× over the topic alone. Hermes gets only a topic, so query generation must be automatic. Research questions first give the queries a structure and later feed screening and the gap check. This is the local stand-in for the scoping step (D-033).
+- **Rejected:** keeping hand-written queries (Hermes can't use them); one long query (one view of the topic); letting Qwen decide how many queries (unbounded)
+- **Date:** 2026-11-25
+
+### D-039 — Hermes integration early, growing with each step (moves the Hermes skill up from the end of the plan)
+- **Decision:** once automatic queries pass the second-topic recall test, build a thin `research-agent run "<topic>"` on the plain state machine (queries → discover → screen, saved state, resumable) and the Hermes skill that calls it. Each later step (fetch, parse, extraction, ledger) is added to `run` as it's built.
+- **Why:** Hermes is the daily interface (D-004). Wiring it early surfaces integration problems (paths, long runs, GPU sharing, output format) while they're cheap to fix, and every new step is usable from Hermes as soon as it exists.
+- **Rejected:** wiring Hermes only at the end (integration surprises after everything is built)
+- **Date:** 2026-11-25
