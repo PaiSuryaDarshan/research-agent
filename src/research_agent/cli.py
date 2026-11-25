@@ -45,23 +45,34 @@ def _screen(args: argparse.Namespace) -> int:
 
 def _discover(args: argparse.Namespace) -> int:
     try:
-        plan = generate(args.topic) if args.query is None else {"questions": [], "queries": args.query}
+        plan = generate(args.topic) if args.query is None else {
+            "anchor": None, "questions": [], "queries": args.query,
+            "query_details": [
+                {"query": query, "branch": "manual", "anchor_appended": False} for query in args.query
+            ],
+        }
         queries = plan["queries"]
         candidates, stats = discover(
             args.topic, queries, args.max_per_query, expand=not args.no_expand,
             top_k=args.top_k, max_candidates=args.max_candidates, fill_abstracts=not args.no_abstracts,
             exclude=args.exclude,
             foundational_min=args.foundational_min,
+            feedback_anchor=plan["anchor"],
         )
         folder = save_run(
             args.topic, queries, args.max_per_query, candidates, stats, questions=plan["questions"],
             query_source="auto" if args.query is None else "manual",
+            anchor=plan["anchor"], query_details=plan["query_details"],
         )
     except (LMStudioError, OpenAlexError, ValueError) as error:
         print(error, file=sys.stderr)
         return 2
     for query, hits in stats.per_query_hits.items():
         print(f"{query}: {hits} hits")
+    if stats.feedback_queries:
+        print("Feedback queries (source | score | query)")
+        for item in stats.feedback_queries:
+            print(f"{item.source} | {item.score:.4f} | {item.query}")
     print(f"Search hits: {sum(stats.per_query_hits.values())}")
     print(f"Backward added: {stats.backward_added}")
     print(f"Forward added: {stats.forward_added}")
@@ -96,10 +107,14 @@ def _queries(args: argparse.Namespace) -> int:
     except (LMStudioError, ValueError) as error:
         print(error, file=sys.stderr)
         return 2
-    for heading, items in (("Research questions", plan["questions"]), ("Search queries", plan["queries"])):
-        print(heading)
-        for number, item in enumerate(items, start=1):
-            print(f"{number}. {item}")
+    print(f"Anchor: {plan['anchor'] or 'unavailable'}")
+    print("Research questions")
+    for number, question in enumerate(plan["questions"], start=1):
+        print(f"{number}. {question}")
+    print("Search queries")
+    for number, detail in enumerate(plan["query_details"], start=1):
+        appended = "yes" if detail["anchor_appended"] else "no"
+        print(f"{number}. {detail['query']} [{detail['branch']}; anchor appended: {appended}]")
     return 0
 
 

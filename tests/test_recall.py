@@ -105,6 +105,7 @@ def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, mon
                 api_work("W2", referenced_works=["W42", "W8"]),
             ]
         else:
+            assert "keywords" not in params["select"].split(",")
             filter_ = params["filter"].split(",")[0]
             filters.append(filter_)
             results = [api_work("W8")] if filter_.startswith("openalex_id:") else [

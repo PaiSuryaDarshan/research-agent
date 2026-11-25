@@ -14,8 +14,10 @@ from dotenv import dotenv_values
 
 from .abstracts import AbstractLookup
 from .expansion import backward, forward
+from .feedback import feedback_queries
 from .models import AbstractSource, Candidate, DiscoveryStats, FoundationalPaper, work_id
 from .openalex import OpenAlexClient, openalex_key
+from .queries import QueryDetail
 from .ranking import RANKING_WEIGHTS, cut_candidates, rank_candidates
 
 
@@ -32,6 +34,7 @@ def discover(
     abstract_lookup: AbstractLookup | None = None,
     exclude: Sequence[str] = (),
     foundational_min: int | None = None,
+    feedback_anchor: str | None = None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     queries = list(queries) or [topic]
     if max_per_query < 1:
@@ -45,7 +48,7 @@ def discover(
     if any(not re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", id_.strip(), re.I) for id_ in exclude):
         raise ValueError("--exclude requires an OpenAlex work ID such as W123.")
     excluded_ids = {work_id(id_.strip()) for id_ in exclude}
-    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, foundational_min)
+    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, foundational_min, feedback_anchor)
     settings = dotenv_values(Path(".env"), interpolate=False)
     s2_key = (settings.get("SEMANTIC_SCHOLAR_API_KEY") or "").strip()
     if client is None:
@@ -108,6 +111,24 @@ def _merge_candidates(
     return len(candidates) - initial_count
 
 
+def _search_queries(
+    client: OpenAlexClient,
+    queries: Sequence[str],
+    max_per_query: int,
+    excluded_ids: set[str],
+    hits: dict[str, int],
+) -> list[Candidate]:
+    search_results = []
+    for query in queries:
+        results = [
+            work for work in client.search(query, max_per_query)
+            if work_id(work.openalex_id) not in excluded_ids
+        ]
+        hits[query] = hits.get(query, 0) + len(results)
+        search_results.extend(results)
+    return search_results
+
+
 def _collect(
     client: OpenAlexClient,
     topic: str,
@@ -118,18 +139,15 @@ def _collect(
     max_candidates: int,
     excluded_ids: set[str],
     foundational_min: int | None,
+    feedback_anchor: str | None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     candidates: dict[tuple[str, str], Candidate] = {}
-    search_results: list[Candidate] = []
     hits: dict[str, int] = {}
     initial_calls = client.api_calls
-    for query in queries:
-        results = [
-            work for work in client.search(query, max_per_query)
-            if work_id(work.openalex_id) not in excluded_ids
-        ]
-        hits[query] = hits.get(query, 0) + len(results)
-        search_results.extend(results)
+    search_results = _search_queries(client, queries, max_per_query, excluded_ids, hits)
+    feedback = feedback_queries(search_results, queries, feedback_anchor) if feedback_anchor else []
+    extra_queries = [item.query for item in feedback]
+    search_results.extend(_search_queries(client, extra_queries, max_per_query, excluded_ids, hits))
 
     if foundational_min is None:
         # Integer ceiling of six percent of eligible, pre-deduplication search hits.
@@ -143,7 +161,7 @@ def _collect(
     backward_added = _merge_candidates(candidates, references)
     forward_added = _merge_candidates(candidates, citers)
     pool = rank_candidates(
-        list(candidates.values()), topic, queries, today.year,
+        list(candidates.values()), topic, [*queries, *extra_queries], today.year,
         max_candidates=None, foundational_min=foundational_min,
     )
     ranked = [work.model_copy() for work in cut_candidates(pool, max_candidates)]
@@ -168,6 +186,7 @@ def _collect(
         excluded_ids=sorted(excluded_ids),
         search_work_ids=list(dict.fromkeys(work_id(work.openalex_id) for work in search_results)),
         all_candidates=pool,
+        feedback_queries=feedback,
     )
 
 
@@ -181,6 +200,8 @@ def save_run(
     runs_dir: Path = Path("data/runs"),
     questions: Sequence[str] = (),
     query_source: Literal["auto", "manual"] = "manual",
+    anchor: str | None = None,
+    query_details: Sequence[QueryDetail] = (),
 ) -> Path:
     now = datetime.now(UTC)
     ascii_topic = normalize("NFKD", topic).encode("ascii", "ignore").decode()
@@ -188,9 +209,15 @@ def save_run(
     slug = slug or "topic"
     metadata = {
         "topic": topic,
-        "queries": list(queries) or [topic],
+        "queries": [*(list(queries) or [topic]), *(item.query for item in stats.feedback_queries)],
         "questions": list(questions),
         "query_source": query_source,
+        "anchor": anchor,
+        "query_details": [*query_details, *(
+            {"query": item.query, "branch": "feedback", "anchor_appended": item.anchor_appended}
+            for item in stats.feedback_queries
+        )],
+        "feedback_queries": [item.model_dump() for item in stats.feedback_queries],
         "max_per_query": max_per_query,
         "excluded_ids": stats.excluded_ids,
         "search_work_ids": stats.search_work_ids,

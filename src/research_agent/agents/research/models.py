@@ -6,6 +6,19 @@ from pydantic import BaseModel, Field, field_validator
 AbstractSource = Literal["openalex", "semantic_scholar", "s2_tldr", "crossref", "none"]
 
 
+class SearchKeyword(BaseModel):
+    display_name: str
+    score: float
+
+
+class FeedbackQuery(BaseModel):
+    query: str
+    term: str
+    score: float
+    source: Literal["keywords", "titles"]
+    anchor_appended: bool
+
+
 class Candidate(BaseModel):
     openalex_id: str
     doi: str | None = None
@@ -30,6 +43,7 @@ class Candidate(BaseModel):
     rank: int = 0
     foundational: bool = False
     foundational_count: int = 0
+    keywords: list[SearchKeyword] = Field(default_factory=list, exclude=True)
 
     @property
     def dedup_key(self) -> tuple[str, str]:
@@ -70,6 +84,7 @@ class DiscoveryStats(BaseModel):
     excluded_ids: list[str] = Field(default_factory=list, exclude=True)
     search_work_ids: list[str] = Field(default_factory=list, exclude=True)
     all_candidates: list[Candidate] | None = Field(default=None, exclude=True)
+    feedback_queries: list[FeedbackQuery] = Field(default_factory=list, exclude=True)
 
 
 def normalize_doi(value: str | None) -> str | None:

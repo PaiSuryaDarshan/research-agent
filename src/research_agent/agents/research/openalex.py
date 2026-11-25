@@ -69,6 +69,7 @@ def _candidate(work: dict[str, Any], query: str | None) -> Candidate:
         referenced_works=work.get("referenced_works") or [],
         found_by=[query] if query is not None else [],
         via=[f"search:{query}"] if query is not None else [],
+        keywords=(work.get("keywords") or []) if query is not None else [],
     )
 
 
@@ -100,7 +101,8 @@ class OpenAlexClient:
         per_page = min(100, max_results)
         while cursor and len(candidates) < max_results:
             works, cursor = self._read_page(
-                {"search": query, "per_page": str(per_page), "cursor": cursor},
+                {"search": query, "per_page": str(per_page), "cursor": cursor,
+                 "select": SELECT_FIELDS + ",keywords"},
                 max_results - len(candidates),
                 query,
             )

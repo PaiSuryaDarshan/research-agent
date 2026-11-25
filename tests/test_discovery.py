@@ -11,6 +11,7 @@ import pytest
 from research_agent.agents.research.abstracts import AbstractLookup
 from research_agent.agents.research.discovery import discover, save_run
 from research_agent.agents.research.expansion import backward, forward
+from research_agent.agents.research.feedback import feedback_queries
 from research_agent.agents.research.models import Candidate
 from research_agent.agents.research.openalex import OpenAlexClient, OpenAlexError
 from research_agent.agents.research.ranking import RANKING_WEIGHTS, rank_candidates
@@ -62,7 +63,7 @@ def test_dedup_and_saved_run(tmp_path: Path, caplog):
         assert params["api_key"] == KEY
         assert set(params["select"].split(",")) == {
             "id", "doi", "display_name", "publication_year", "type", "authorships",
-            "primary_location", "cited_by_count", "abstract_inverted_index", "referenced_works",
+            "primary_location", "cited_by_count", "abstract_inverted_index", "referenced_works", "keywords",
         }
         results = (
             [work(1, doi="https://doi.org/10.1234/First"), work(3)]
@@ -304,6 +305,37 @@ def test_log_indegree_counts_only_incoming_and_distinct_search_hits():
     assert landmark.foundational and landmark.foundational_count == 2
     assert not other.foundational and other.foundational_count == 1
     assert not any(item.foundational for item in rank_candidates(inputs, "", [], 2026))
+
+
+def test_feedback_scores_novel_keywords_and_anchors_them():
+    first = candidate(1, keywords=[
+        {"display_name": "Isoconversional analysis", "score": 0.6},
+        {"display_name": "Materials Science", "score": 20},
+        {"display_name": "Kinetic modelling", "score": 10},
+        {"display_name": "Biomass pyrolysis", "score": 9},
+    ])
+    second = candidate(2, keywords=[
+        {"display_name": "ISOCONVERSIONAL ANALYSIS", "score": 0.5},
+        {"display_name": "Pyrolysis reactor design", "score": 0.9},
+        {"display_name": "Isoconversional analysis technique", "score": 0.3},
+    ])
+    results = feedback_queries([first, second], ["kinetic modelling of biomass pyrolysis"], "biomass pyrolysis")
+    assert [item.query for item in results] == [
+        "isoconversional analysis biomass pyrolysis", "pyrolysis reactor design",
+    ]
+    assert [item.score for item in results] == pytest.approx([1.1, 0.9])
+    assert [item.anchor_appended for item in results] == [True, False]
+    assert all(item.source == "keywords" for item in results)
+
+
+def test_feedback_falls_back_to_frequent_title_phrases():
+    hits = [candidate(1, title="Distributed activation in reactors"),
+            candidate(2, title="Distributed activation under nitrogen")]
+    first, = feedback_queries(hits, ["kinetic modelling of biomass pyrolysis"], "biomass pyrolysis", max_new=1)
+    assert first.model_dump() == {
+        "query": "distributed activation biomass pyrolysis", "term": "distributed activation",
+        "score": 2.0, "source": "titles", "anchor_appended": True,
+    }
 
 
 def test_foundational_protection_adds_paper_after_cut(tmp_path: Path, monkeypatch, capsys):
