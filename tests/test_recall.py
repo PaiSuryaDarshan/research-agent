@@ -30,7 +30,6 @@ def test_recall_matches_id_first_and_falls_back_to_doi(tmp_path: Path, with_scre
         write_rows(tmp_path / "screened.jsonl", [second])
         write_rows(tmp_path / "all_candidates.jsonl", [
             first, second, {"openalex_id": "W3", "rank": 321, "graph": 0.5},
-            {"openalex_id": "W4", "rank": 400, "keyword": 0.3},
         ])
         (tmp_path / "screening_excluded.csv").write_text(
             "rank,year,title,reason\n3,2025,Paper W1,Off-topic for this review.\n", encoding="utf-8"
@@ -52,13 +51,14 @@ def test_recall_matches_id_first_and_falls_back_to_doi(tmp_path: Path, with_scre
     assert result.n_references == 4
     assert result.recall_candidates == 0.5
     assert result.recall_kept == (0.25 if with_screening else None)
-    assert result.recall_pool == (1.0 if with_screening else None)
-    assert [row.id for row in result.cut_references] == (["W4", "W3"] if with_screening else [])
+    assert result.recall_pool == (0.75 if with_screening else None)
+    assert [row.id for row in result.cut_references] == (["W3"] if with_screening else [])
+    assert [row.id for row in result.pool_missed] == (["W4"] if with_screening else [])
     assert [(row.id, row.screening_reason) for row in result.screening_dropped] == (
         [("W1", "Off-topic for this review.")] if with_screening else []
     )
     if with_screening:
-        assert result.cut_references[0].pool_work.keyword == 0.3
+        assert result.cut_references[0].pool_work.graph == 0.5
     assert not result.leakage
     assert [row.id for row in missed] == ["W4", "W3"]
     csv_text = (tmp_path / "recall_W42.csv").read_text(encoding="utf-8")
@@ -68,7 +68,7 @@ def test_recall_matches_id_first_and_falls_back_to_doi(tmp_path: Path, with_scre
     assert rows[2]["found_in_pool"] == ("True" if with_screening else "")
     assert rows[2]["pool_rank"] == ("321" if with_screening else "")
     metadata = (tmp_path / "run.json").read_text(encoding="utf-8")
-    assert json.loads(metadata)["recall"] == result.model_dump()
+    assert json.loads(metadata)["recall"] == json.loads(metadata)["recalls"]["W42"] == result.model_dump()
     assert KEY not in csv_text + metadata
 
 
@@ -91,19 +91,27 @@ def test_recall_cli_warns_about_leakage(tmp_path: Path, monkeypatch, capsys, sou
     assert ("ranked candidates" if source == "candidates" else "search hits before ranking") in output.err
 
 
-def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("by_doi", [False, True])
+def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, monkeypatch, by_doi: bool):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENALEX_API_KEY", KEY)
     filters = []
+    requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         params = request.url.params
+        requests.append(request.url.path)
+        if request.url.path == "/works/doi:10.1/review":
+            assert params["select"] == "id"
+            return httpx.Response(200, json={"id": "https://openalex.org/W42"})
         if "search" in params:
             results = [
                 api_work("W42", cited_by_count=100, referenced_works=["W7"]),
                 api_work("W1", referenced_works=["W7", "W42", "W8"]),
                 api_work("W2", referenced_works=["W42", "W8"]),
             ]
+            if by_doi:
+                results.append(api_work("W51", doi="https://doi.org/10.1/review"))
         else:
             assert "keywords" not in params["select"].split(",")
             filter_ = params["filter"].split(",")[0]
@@ -115,8 +123,10 @@ def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, mon
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: http)
-    assert main(["discover", "topic", "--query", "topic", "--exclude", "w42", "--exclude", "W50",
+    exclusions = ["--exclude", "https://doi.org/10.1/REVIEW", "--exclude", "10.1/review"] if by_doi else ["--exclude", "w42"]
+    assert main(["discover", "topic", "--query", "topic", *exclusions, "--exclude", "W50",
                  "--max-candidates", "2", "--no-abstracts"]) == 0
+    assert requests == (["/works/doi:10.1/review"] if by_doi else []) + ["/works"] * 4
     assert filters == ["openalex_id:W8", "cites:W1", "cites:W2"]
     folder, = Path("data/runs").iterdir()
     rows = [json.loads(line) for line in (folder / "candidates.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -127,4 +137,5 @@ def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, mon
     assert {row["openalex_id"].rsplit("/", 1)[-1] for row in pool} == {"W1", "W2", "W8", "W10"}
     metadata = json.loads((folder / "run.json").read_text(encoding="utf-8"))
     assert metadata["excluded_ids"] == ["W42", "W50"]
+    assert metadata["excluded_dois"] == ({"10.1/review": "W42"} if by_doi else {})
     assert metadata["search_work_ids"] == ["W1", "W2"]

@@ -82,6 +82,7 @@ class DiscoveryStats(BaseModel):
     abstract_lookup_failures: dict[str, int] = Field(default_factory=dict)
     s2_key_found: bool = Field(default=False, exclude=True)
     excluded_ids: list[str] = Field(default_factory=list, exclude=True)
+    excluded_dois: dict[str, str] = Field(default_factory=dict, exclude=True)
     search_work_ids: list[str] = Field(default_factory=list, exclude=True)
     all_candidates: list[Candidate] | None = Field(default=None, exclude=True)
     feedback_queries: list[FeedbackQuery] = Field(default_factory=list, exclude=True)

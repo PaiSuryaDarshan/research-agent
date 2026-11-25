@@ -148,6 +148,10 @@ def _recall(args: argparse.Namespace) -> int:
     print("Most-cited references missed by candidates (year | citations | title)")
     for row in missed:
         print(f"{row.year or '?'} | {row.cited_by_count} | {row.title}")
+    if result.recall_pool is not None:
+        print("Most-cited references missed by the pool (year | citations | title)")
+        for row in result.pool_missed:
+            print(f"{row.year or '?'} | {row.cited_by_count} | {row.title}")
     print("Most-cited references found in the pool but cut")
     for row in result.cut_references:
         work = row.pool_work
@@ -188,8 +192,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     discovery.add_argument("--max-candidates", type=int, default=300, help="Maximum ranked candidates to keep.")
     discovery.add_argument("--foundational-min", type=int, metavar="N",
                            help="Override the minimum citing search hits (default: 6%% of hits rounded up, at least 3).")
-    discovery.add_argument("--exclude", action="append", default=[], metavar="WID",
-                           help="Exclude an OpenAlex work before expansion. Repeat for multiple IDs.")
+    discovery.add_argument("--exclude", action="append", default=[], metavar="ID_OR_DOI",
+                           help="Exclude an OpenAlex work by ID or DOI before expansion. Repeat as needed.")
     query_generation = commands.add_parser("queries", help="Generate research questions and search queries locally.")
     query_generation.add_argument("topic")
     screening = commands.add_parser("screen", help="Screen a discovery run with local LM Studio.")

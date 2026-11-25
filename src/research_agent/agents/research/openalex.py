@@ -18,6 +18,14 @@ SELECT_FIELDS = (
 )
 
 
+def is_work_id(identifier: str) -> bool:
+    return re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", identifier, re.I) is not None
+
+
+def doi_url(doi: str) -> str:
+    return f"{WORKS_URL}/{quote('doi:' + doi, safe=':/')}"
+
+
 def _redact_request_log(record: logging.LogRecord) -> bool:
     # HTTPX includes the complete request URL in its INFO record.
     if isinstance(record.args, tuple):
@@ -115,17 +123,27 @@ class OpenAlexClient:
         )
         return works
 
+    def resolve_doi(self, doi: str) -> str:
+        response = self._get_page({"select": "id"}, doi_url(doi))
+        try:
+            identifier = response.json()["id"]
+            if is_work_id(identifier):
+                return work_id(identifier)
+        except (KeyError, TypeError, ValueError):
+            pass
+        raise OpenAlexError("OpenAlex did not return a work ID for the excluded DOI.")
+
     def reference(self, identifier: str) -> Candidate:
         identifier = identifier.strip()
-        if re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", identifier, re.I):
-            key = work_id(identifier)
+        if is_work_id(identifier):
+            url = f"{WORKS_URL}/{work_id(identifier)}"
         else:
             doi = normalize_doi(identifier)
             if not doi or not re.fullmatch(r"10\.[0-9]+/\S+", doi):
                 raise ValueError("Enter a DOI or OpenAlex work ID for --reference.")
-            key = quote("doi:" + doi, safe=":/")
+            url = doi_url(doi)
         response = self._get_page(
-            {"select": "id,doi,display_name,referenced_works"}, f"{WORKS_URL}/{key}"
+            {"select": "id,doi,display_name,referenced_works"}, url
         )
         try:
             data = response.json()

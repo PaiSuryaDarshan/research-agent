@@ -15,8 +15,8 @@ from dotenv import dotenv_values
 from .abstracts import AbstractLookup
 from .expansion import backward, forward
 from .feedback import feedback_queries
-from .models import AbstractSource, Candidate, DiscoveryStats, FoundationalPaper, work_id
-from .openalex import OpenAlexClient, openalex_key
+from .models import AbstractSource, Candidate, DiscoveryStats, FoundationalPaper, normalize_doi, work_id
+from .openalex import OpenAlexClient, is_work_id, openalex_key
 from .queries import QueryDetail
 from .ranking import RANKING_WEIGHTS, cut_candidates, rank_candidates
 
@@ -45,10 +45,18 @@ def discover(
         raise ValueError("max_candidates must be at least 1.")
     if foundational_min is not None and foundational_min < 1:
         raise ValueError("--foundational-min must be at least 1.")
-    if any(not re.fullmatch(r"(?:https?://openalex\.org/)?W[0-9]+/?", id_.strip(), re.I) for id_ in exclude):
-        raise ValueError("--exclude requires an OpenAlex work ID such as W123.")
-    excluded_ids = {work_id(id_.strip()) for id_ in exclude}
-    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, foundational_min, feedback_anchor)
+    excluded_ids: set[str] = set()
+    dois: set[str] = set()
+    for identifier in exclude:
+        identifier = identifier.strip()
+        if is_work_id(identifier):
+            excluded_ids.add(work_id(identifier))
+        elif (doi := normalize_doi(identifier)) and re.fullmatch(r"10\.[0-9]+/\S+", doi):
+            dois.add(doi)
+        else:
+            raise ValueError("--exclude requires a DOI or an OpenAlex work ID such as W123.")
+    options = (topic, queries, max_per_query, expand, top_k, max_candidates, excluded_ids, dois,
+               foundational_min, feedback_anchor)
     settings = dotenv_values(Path(".env"), interpolate=False)
     s2_key = (settings.get("SEMANTIC_SCHOLAR_API_KEY") or "").strip()
     if client is None:
@@ -116,13 +124,14 @@ def _search_queries(
     queries: Sequence[str],
     max_per_query: int,
     excluded_ids: set[str],
+    excluded_dois: set[str],
     hits: dict[str, int],
 ) -> list[Candidate]:
     search_results = []
     for query in queries:
         results = [
             work for work in client.search(query, max_per_query)
-            if work_id(work.openalex_id) not in excluded_ids
+            if work_id(work.openalex_id) not in excluded_ids and work.doi not in excluded_dois
         ]
         hits[query] = hits.get(query, 0) + len(results)
         search_results.extend(results)
@@ -138,16 +147,19 @@ def _collect(
     top_k: int,
     max_candidates: int,
     excluded_ids: set[str],
+    dois: set[str],
     foundational_min: int | None,
     feedback_anchor: str | None,
 ) -> tuple[list[Candidate], DiscoveryStats]:
     candidates: dict[tuple[str, str], Candidate] = {}
     hits: dict[str, int] = {}
     initial_calls = client.api_calls
-    search_results = _search_queries(client, queries, max_per_query, excluded_ids, hits)
+    excluded_dois = {doi: client.resolve_doi(doi) for doi in sorted(dois)}
+    excluded_ids = excluded_ids.union(excluded_dois.values())
+    search_results = _search_queries(client, queries, max_per_query, excluded_ids, dois, hits)
     feedback = feedback_queries(search_results, queries, feedback_anchor) if feedback_anchor else []
     extra_queries = [item.query for item in feedback]
-    search_results.extend(_search_queries(client, extra_queries, max_per_query, excluded_ids, hits))
+    search_results.extend(_search_queries(client, extra_queries, max_per_query, excluded_ids, dois, hits))
 
     if foundational_min is None:
         # Integer ceiling of six percent of eligible, pre-deduplication search hits.
@@ -156,8 +168,8 @@ def _collect(
     today = datetime.now(UTC).date()
     references = backward(search_results, client, excluded_ids=excluded_ids) if expand else []
     citers = forward(list(candidates.values()), client, top_k, today=today) if expand else []
-    references = [work for work in references if work_id(work.openalex_id) not in excluded_ids]
-    citers = [work for work in citers if work_id(work.openalex_id) not in excluded_ids]
+    references = [work for work in references if work_id(work.openalex_id) not in excluded_ids and work.doi not in dois]
+    citers = [work for work in citers if work_id(work.openalex_id) not in excluded_ids and work.doi not in dois]
     backward_added = _merge_candidates(candidates, references)
     forward_added = _merge_candidates(candidates, citers)
     pool = rank_candidates(
@@ -184,6 +196,7 @@ def _collect(
             for work in foundational[:15]
         ],
         excluded_ids=sorted(excluded_ids),
+        excluded_dois=excluded_dois,
         search_work_ids=list(dict.fromkeys(work_id(work.openalex_id) for work in search_results)),
         all_candidates=pool,
         feedback_queries=feedback,
@@ -220,6 +233,7 @@ def save_run(
         "feedback_queries": [item.model_dump() for item in stats.feedback_queries],
         "max_per_query": max_per_query,
         "excluded_ids": stats.excluded_ids,
+        "excluded_dois": stats.excluded_dois,
         "search_work_ids": stats.search_work_ids,
         "stats": stats.model_dump(),
         "ranking_weights": RANKING_WEIGHTS,

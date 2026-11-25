@@ -52,6 +52,7 @@ class RecallResult(BaseModel):
     reference_in_candidates: bool
     reference_in_search: bool | None
     cut_references: list[ReferenceRow] = Field(exclude=True)
+    pool_missed: list[ReferenceRow] = Field(exclude=True)
     screening_dropped: list[ReferenceRow] = Field(exclude=True)
 
 
@@ -169,10 +170,14 @@ def measure_recall(
         reference_in_candidates=reference_candidate is not None,
         reference_in_search=in_search,
         cut_references=cut_references[:10],
+        pool_missed=sorted(
+            (row for row in rows if row.found_in_pool is False), key=lambda row: -row.cited_by_count,
+        )[:10],
         screening_dropped=[row for row in rows if row.screening_reason is not None],
     )
     _write_report(folder / f"recall_{reference_id}.csv", rows)
     metadata["recall"] = result.model_dump()
+    metadata.setdefault("recalls", {})[reference_id] = metadata["recall"]
     with NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, delete=False) as staged:
         staged_path = Path(staged.name)
         staged.write(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
