@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from os import getenv
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import get_args
+from typing import Literal, get_args
 from unicodedata import normalize
 
 import httpx
@@ -179,6 +179,8 @@ def save_run(
     stats: DiscoveryStats,
     *,
     runs_dir: Path = Path("data/runs"),
+    questions: Sequence[str] = (),
+    query_source: Literal["auto", "manual"] = "manual",
 ) -> Path:
     now = datetime.now(UTC)
     ascii_topic = normalize("NFKD", topic).encode("ascii", "ignore").decode()
@@ -187,6 +189,8 @@ def save_run(
     metadata = {
         "topic": topic,
         "queries": list(queries) or [topic],
+        "questions": list(questions),
+        "query_source": query_source,
         "max_per_query": max_per_query,
         "excluded_ids": stats.excluded_ids,
         "search_work_ids": stats.search_work_ids,

@@ -67,6 +67,10 @@ def test_invalid_json_retries_and_is_kept(tmp_path: Path):
 
 def test_screen_routes_decisions_and_resumes_by_prompt(tmp_path: Path):
     make_run(tmp_path)
+    questions = ["How do pyrolysis rates vary with feedstock?"]
+    metadata_path = tmp_path / "run.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata_path.write_text(json.dumps({**metadata, "questions": questions}), encoding="utf-8")
     prompts = []
     decisions = {"Paper 1": "include", "Paper 2": "exclude", "Paper 3": "unsure"}
 
@@ -96,6 +100,7 @@ def test_screen_routes_decisions_and_resumes_by_prompt(tmp_path: Path):
         with (tmp_path / "screening_excluded.csv").open(encoding="utf-8", newline="") as file:
             assert list(csv.DictReader(file))[0]["title"] == "Paper 2"
         assert prompts[0]["paper"]["abstract"] == "[openalex] Biomass"
+        assert prompts[0]["research_questions"] == questions
         assert prompts[1]["paper"]["abstract"] == "NO ABSTRACT"
         assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))["screening"] == stats
         assert screen_run(tmp_path, client, criteria="New scope", limit=1)["cache_hits"] == 0

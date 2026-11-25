@@ -1,10 +1,15 @@
 import json
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from os import getenv
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
 THINK_BLOCK = re.compile(r"<think>.*?</think>", flags=re.I | re.S)
@@ -12,6 +17,24 @@ THINK_BLOCK = re.compile(r"<think>.*?</think>", flags=re.I | re.S)
 
 class LMStudioError(Exception):
     """A reportable LM Studio error without request or response contents."""
+
+
+@contextmanager
+def local_client() -> Iterator["LMStudioClient"]:
+    settings = dotenv_values(Path(".env"), interpolate=False)
+    base = settings.get("LMSTUDIO_BASE_URL") or getenv("LMSTUDIO_BASE_URL") or "http://localhost:1234"
+    model = settings.get("LMSTUDIO_MODEL") or getenv("LMSTUDIO_MODEL")
+    if not model:
+        raise LMStudioError("Set LMSTUDIO_MODEL in .env to the local Qwen model ID.")
+    try:
+        url = urlsplit(base)
+        valid = url.scheme in {"http", "https"} and url.hostname and url.username is None and not (url.query or url.fragment)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise LMStudioError("Set LMSTUDIO_BASE_URL to the local server URL without credentials or query parameters.")
+    with httpx.Client(trust_env=False) as http:
+        yield LMStudioClient(http, base, model)
 
 
 class LMStudioClient:

@@ -67,6 +67,7 @@ def _prompt(candidate: Candidate, metadata: dict, criteria: str | None) -> str:
     return json.dumps({
         "topic": metadata["topic"],
         "queries": metadata["queries"],
+        **({"research_questions": metadata["questions"]} if metadata.get("questions") else {}),
         "additional_criteria": criteria or "",
         "paper": {
             "title": candidate.title,

@@ -176,7 +176,7 @@ def test_transport_error_omits_request_url():
 def test_cli_missing_key_exits_two(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENALEX_API_KEY", raising=False)
-    assert main(["discover", "topic"]) == 2
+    assert main(["discover", "topic", "--query", "topic"]) == 2
     assert "Set OPENALEX_API_KEY in .env" in capsys.readouterr().err
     assert not (tmp_path / "data").exists()
 
@@ -315,7 +315,7 @@ def test_foundational_protection_adds_paper_after_cut(tmp_path: Path, monkeypatc
     ] + [work(4, display_name="Classic method", publication_year=1957)]
     http = client(lambda _: httpx.Response(200, json={"results": results}))
     monkeypatch.setattr(httpx, "Client", lambda **_: http)
-    assert main(["discover", "Topic", "--max-candidates", "1", "--no-expand", "--no-abstracts"]) == 0
+    assert main(["discover", "Topic", "--query", "Topic", "--max-candidates", "1", "--no-expand", "--no-abstracts"]) == 0
     folder, = Path("data/runs").iterdir()
     kept = [json.loads(line) for line in (folder / "candidates.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [(row["rank"], row["foundational"]) for row in kept] == [(1, False), (4, True)]
@@ -354,7 +354,7 @@ def test_cli_no_expand_and_no_abstracts_skip_extra_calls(tmp_path: Path, monkeyp
     monkeypatch.setattr("research_agent.agents.research.discovery.httpx.Client", lambda **_: http)
     monkeypatch.setenv("OPENALEX_API_KEY", KEY)
     monkeypatch.chdir(tmp_path)
-    assert main(["discover", "topic", "--no-expand", "--no-abstracts", "--max-candidates", "1"]) == 0
+    assert main(["discover", "topic", "--query", "topic", "--no-expand", "--no-abstracts", "--max-candidates", "1"]) == 0
     output = capsys.readouterr().out
     assert "API calls: 1" in output
     assert "After de-dup: 2" in output

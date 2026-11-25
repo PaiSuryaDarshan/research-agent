@@ -1,27 +1,20 @@
 import argparse
 import sys
 from collections.abc import Sequence
-from os import getenv
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 from dotenv import dotenv_values
 
 from .agents.research.discovery import discover, save_run
 from .agents.research.openalex import OpenAlexClient, OpenAlexError, openalex_key
+from .agents.research.queries import generate
 from .agents.research.screening import screen_run
 from .benchmark_tools.recall import measure_recall
-from .llm.lmstudio import LMStudioClient, LMStudioError
+from .llm.lmstudio import LMStudioError, local_client
 
 
 def _screen(args: argparse.Namespace) -> int:
-    settings = dotenv_values(Path(".env"), interpolate=False)
-    base = settings.get("LMSTUDIO_BASE_URL") or getenv("LMSTUDIO_BASE_URL") or "http://localhost:1234"
-    model = settings.get("LMSTUDIO_MODEL") or getenv("LMSTUDIO_MODEL")
-    if not model:
-        print("Set LMSTUDIO_MODEL in .env to the local Qwen model ID.", file=sys.stderr)
-        return 2
     if args.limit is not None and args.limit < 1:
         print("--limit must be at least 1.", file=sys.stderr)
         return 2
@@ -31,12 +24,9 @@ def _screen(args: argparse.Namespace) -> int:
             print(f"Screened {done}/{total} ({cached} cached)", flush=True)
 
     try:
-        url = urlsplit(base)
-        if url.scheme not in {"http", "https"} or not url.hostname or url.username is not None or url.query or url.fragment:
-            raise LMStudioError("Set LMSTUDIO_BASE_URL to the local server URL without credentials or query parameters.")
-        with httpx.Client(trust_env=False) as http:
+        with local_client() as client:
             stats = screen_run(
-                args.folder, LMStudioClient(http, base, model),
+                args.folder, client,
                 criteria=args.criteria, limit=args.limit, progress=progress,
             )
     except LMStudioError as error:
@@ -54,16 +44,20 @@ def _screen(args: argparse.Namespace) -> int:
 
 
 def _discover(args: argparse.Namespace) -> int:
-    queries = args.query or [args.topic]
     try:
+        plan = generate(args.topic) if args.query is None else {"questions": [], "queries": args.query}
+        queries = plan["queries"]
         candidates, stats = discover(
             args.topic, queries, args.max_per_query, expand=not args.no_expand,
             top_k=args.top_k, max_candidates=args.max_candidates, fill_abstracts=not args.no_abstracts,
             exclude=args.exclude,
             foundational_min=args.foundational_min,
         )
-        folder = save_run(args.topic, queries, args.max_per_query, candidates, stats)
-    except (OpenAlexError, ValueError) as error:
+        folder = save_run(
+            args.topic, queries, args.max_per_query, candidates, stats, questions=plan["questions"],
+            query_source="auto" if args.query is None else "manual",
+        )
+    except (LMStudioError, OpenAlexError, ValueError) as error:
         print(error, file=sys.stderr)
         return 2
     for query, hits in stats.per_query_hits.items():
@@ -93,6 +87,19 @@ def _discover(args: argparse.Namespace) -> int:
         print("Rank | Year | Citations | Title")
         for work in candidates[:10]:
             print(f"{work.rank} | {work.year or '?'} | {work.cited_by_count} | {work.title}")
+    return 0
+
+
+def _queries(args: argparse.Namespace) -> int:
+    try:
+        plan = generate(args.topic)
+    except (LMStudioError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 2
+    for heading, items in (("Research questions", plan["questions"]), ("Search queries", plan["queries"])):
+        print(heading)
+        for number, item in enumerate(items, start=1):
+            print(f"{number}. {item}")
     return 0
 
 
@@ -168,6 +175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                            help="Override the minimum citing search hits (default: 6%% of hits rounded up, at least 3).")
     discovery.add_argument("--exclude", action="append", default=[], metavar="WID",
                            help="Exclude an OpenAlex work before expansion. Repeat for multiple IDs.")
+    query_generation = commands.add_parser("queries", help="Generate research questions and search queries locally.")
+    query_generation.add_argument("topic")
     screening = commands.add_parser("screen", help="Screen a discovery run with local LM Studio.")
     screening.add_argument("folder", type=Path)
     screening.add_argument("--criteria", help="Additional inclusion criteria.")
@@ -179,6 +188,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "discover":
         return _discover(args)
+    if args.command == "queries":
+        return _queries(args)
     if args.command == "screen":
         return _screen(args)
     if args.command == "recall":

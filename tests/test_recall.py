@@ -114,7 +114,7 @@ def test_discover_excludes_search_seed_and_expansion_results(tmp_path: Path, mon
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: http)
-    assert main(["discover", "topic", "--exclude", "w42", "--exclude", "W50",
+    assert main(["discover", "topic", "--query", "topic", "--exclude", "w42", "--exclude", "W50",
                  "--max-candidates", "2", "--no-abstracts"]) == 0
     assert filters == ["openalex_id:W8", "cites:W1", "cites:W2"]
     folder, = Path("data/runs").iterdir()
